@@ -13,4 +13,8 @@ void TT_WorkAreaFromWindow(HWND hwnd, RECT *wa);
 void TT_InstallDialogPlacement(void);
 void TT_RichEditEnablePictures(HWND re);
 
+/* ttsearch.c: the WinHelp 3.1 Search dialog (phase 2a) */
+struct tagHlpFileFile;
+BOOL TT_SearchDialog(HWND owner, struct tagHlpFileFile *hlpfile, LONG *offset);
+
 #endif

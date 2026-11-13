@@ -91,6 +91,28 @@ STID_HELP_FILES_HLP, 	"Help files (*.hlp)"
 STID_FILE_NOT_FOUND_s	"Cannot find '%s'. Do you want to find this file yourself?"
 STID_NO_RICHEDIT	"Cannot find a richedit implementation... Aborting"
 STID_PSH_INDEX,		"Help topics: "
+STID_TT_CLOSE,		"Close"     /* TELETEXT PORT: Search's Cancel after Show Topics */
+STID_TT_SEARCH,		"&Search"   /* TELETEXT PORT: WinHelp 3.1 button label */
+}
+
+/* TELETEXT PORT (phase 2a): the WinHelp 3.1 Search dialog, as WINHELP.EXE
+ * 3.10 shows it. ttsearch.c places every control in pixels in
+ * WM_INITDIALOG (measured from the real dialog), so the DLUs here are only
+ * nominal. */
+IDD_TT_SEARCH DIALOG 0, 0, 260, 200
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Search"
+FONT 8, "MS Sans Serif"
+{
+    LTEXT         "Type a &word, or select one from the list.\nThen choose Show Topics.", IDC_TTS_PROMPT1, 4, 6, 180, 18
+    EDITTEXT      IDC_TTS_EDIT, 4, 28, 172, 12, ES_AUTOHSCROLL
+    LISTBOX       IDC_TTS_KEYS, 16, 40, 238, 50, LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT | LBS_DISABLENOSCROLL | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    PUSHBUTTON    "Cancel", IDCANCEL, 190, 6, 62, 14
+    PUSHBUTTON    "&Show Topics", IDC_TTS_SHOW, 190, 24, 62, 14
+    CONTROL       "", IDC_TTS_RULE, "Static", SS_OWNERDRAW, 4, 96, 250, 1
+    LTEXT         "Select a &topic, then choose Go To.", IDC_TTS_PROMPT2, 4, 106, 180, 9
+    PUSHBUTTON    "&Go To", IDC_TTS_GOTO, 190, 102, 62, 14
+    LISTBOX       IDC_TTS_TOPICS, 4, 120, 250, 60, LBS_NOTIFY | LBS_SORT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_BORDER | WS_TABSTOP
 }
 
 IDD_INDEX DIALOG 0, 0, 200, 190

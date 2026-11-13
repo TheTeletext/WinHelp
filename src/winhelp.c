@@ -1721,6 +1721,19 @@ BOOL WINHELP_CreateIndexWindow(BOOL is_search)
         return FALSE;
     }
 
+    /* TELETEXT PORT (phase 2a, gap 1): WinHelp 3.1 has one modal Search
+     * dialog (Search button, Search() and Finder() macros), and it handles
+     * keywords with several topics. ttsearch.c reproduces it; Wine's
+     * Index/Search property sheet below is kept but no longer reached. */
+    if (!getenv("TTWINHLP_WINE_INDEX"))
+    {
+        LONG offset;
+        if (TT_SearchDialog(Globals.active_win->hMainWnd, id.hlpfile, &offset))
+            WINHELP_OpenHelpWindow(HLPFILE_PageByOffset, id.hlpfile, offset,
+                                   Globals.active_win->info, SW_NORMAL);
+        return TRUE;
+    }
+
     InitCommonControls();
 
     id.jump = FALSE;

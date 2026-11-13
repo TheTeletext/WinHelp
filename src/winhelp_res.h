@@ -51,4 +51,17 @@
 #define IDC_INDEXLIST           0x151
 #define IDD_SEARCH              0x152
 
+/* TELETEXT PORT (phase 2a): the WinHelp 3.1 Search dialog (ttsearch.c) */
+#define IDD_TT_SEARCH           0x160
+#define IDC_TTS_PROMPT1         0x161
+#define IDC_TTS_EDIT            0x162
+#define IDC_TTS_KEYS            0x163
+#define IDC_TTS_SHOW            0x164
+#define IDC_TTS_RULE            0x165
+#define IDC_TTS_PROMPT2         0x166
+#define IDC_TTS_GOTO            0x167
+#define IDC_TTS_TOPICS          0x168
+#define STID_TT_CLOSE           0x170
+#define STID_TT_SEARCH          0x171
+
 #define IDI_WINHELP             0xF00
