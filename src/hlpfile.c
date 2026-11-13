@@ -47,7 +47,12 @@ static inline short GET_SHORT(const BYTE* buffer, unsigned i)
 
 static inline unsigned GET_UINT(const BYTE* buffer, unsigned i)
 {
-    return GET_USHORT(buffer, i) + 0x10000 * GET_USHORT(buffer, i + 2);
+    /* TELETEXT PORT (upstream bug, latent in Wine too): the high word was
+     * multiplied as a signed int, so any value >= 0x80000000 (0xFFFFFFFF is
+     * WinHelp's "none" marker) overflowed: undefined behaviour. GCC 16 at
+     * -O2 then dropped the 0xFFFFFFFF test in HLPFILE_AddPage and indexed
+     * TOMap with it: every WinHelp 3.0 file crashed on load. Unsigned now. */
+    return (unsigned)GET_USHORT(buffer, i) + 0x10000u * GET_USHORT(buffer, i + 2);
 }
 
 static HLPFILE *first_hlpfile = 0;

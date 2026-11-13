@@ -218,7 +218,13 @@ HLPFILE* WINHELP_LookupHelpFile(LPCSTR lpszFile)
     char szFullName[MAX_PATH];
     char szAddPath[MAX_PATH];
     char *p;
+    /* TELETEXT PORT: directory of the last help file opened. Wine left
+     * szAddPath UNINITIALISED when no help window was active yet, which is
+     * the case while a file's own [CONFIG] macros run (e.g. TUTORIAL.HLP
+     * jumping into itself by name): SearchPath got stack garbage. */
+    static char last_dir[MAX_PATH];
 
+    lstrcpynA(szAddPath, last_dir, sizeof(szAddPath));
     /*
      * NOTE: This is needed by popup windows only.
      * In other cases it's not needed but does not hurt though.
@@ -246,6 +252,13 @@ HLPFILE* WINHELP_LookupHelpFile(LPCSTR lpszFile)
     if (!hlpfile)
         WINHELP_MessageBoxIDS_s(STID_HLPFILE_ERROR_s, lpszFile,
                                 STID_WHERROR, MB_OK|MB_ICONSTOP);
+    else
+    {
+        /* TELETEXT PORT: remember where it was found (see last_dir) */
+        if (GetFullPathNameA(szFullName, sizeof(last_dir), last_dir, NULL) &&
+            (p = strrchr(last_dir, '\\')))
+            *p = 0;
+    }
     return hlpfile;
 }
 
@@ -583,6 +596,12 @@ static void WINHELP_DeletePageLinks(HLPFILE_PAGE* page)
         next = curr->next;
         free(curr);
     }
+    /* TELETEXT PORT: Wine left the freed list on the page. Two windows can
+     * show the same page (TUTORIAL.HLP: main and "tutorial"), so closing
+     * the second freed it again (double free, crash on exit). Known residue:
+     * the surviving window's hotspots go inert until its topic is redrawn,
+     * because links live on the page, not on the window. */
+    page->first_link = NULL;
 }
 
 /***********************************************************************
@@ -660,6 +679,16 @@ static void WINHELP_DeleteWindow(WINHELP_WINDOW* win)
     if (bExit) MACRO_Exit();
     if (!Globals.win_list)
         PostQuitMessage(0);
+}
+
+/* TELETEXT PORT: is this window still in the window list (not yet freed)?
+ * Compares pointers only; never dereferences win. */
+static BOOL WINHELP_IsWindowAlive(const WINHELP_WINDOW* win)
+{
+    const WINHELP_WINDOW* w;
+    for (w = Globals.win_list; w; w = w->next)
+        if (w == win) return TRUE;
+    return FALSE;
 }
 
 static char* WINHELP_GetCaption(WINHELP_WNDPAGE* wpage)
@@ -913,11 +942,25 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
     if (!(wpage->wininfo->win_style & WS_POPUP) && wpage->page)
     {
         HLPFILE_MACRO  *macro;
-        for (macro = wpage->page->file->first_macro; macro; macro = macro->next)
+        BOOL            alive = TRUE;
+        /* TELETEXT PORT: a macro may delete this window, and with it the
+         * last reference to its help file (e.g. NetManage XoftWare
+         * TUTORIAL.HLP: JumpId into its own secondary window, whose [CONFIG]
+         * run then performs CloseWindow("main") once more). Wine went on
+         * executing the remaining macros against the freed window and
+         * walking the freed file's macro list: a use-after-free that
+         * crashed the viewer. Stop as soon as the window is gone. */
+        for (macro = wpage->page->file->first_macro; macro && alive; macro = macro->next)
+        {
             MACRO_ExecuteMacro(win, macro->lpszMacro);
+            alive = WINHELP_IsWindowAlive(win);
+        }
 
-        for (macro = wpage->page->first_macro; macro; macro = macro->next)
+        for (macro = alive ? wpage->page->first_macro : NULL; macro && alive; macro = macro->next)
+        {
             MACRO_ExecuteMacro(win, macro->lpszMacro);
+            alive = WINHELP_IsWindowAlive(win);
+        }
     }
     /* See #17681, in some cases, the newly created window is closed by the macros it contains
      * (braindead), so deal with this case
@@ -1761,6 +1804,7 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show)
     HACCEL              hAccel;
 
     Globals.hInstance = hInstance;
+    TT_InstallDialogPlacement();   /* TELETEXT PORT: dialogs on the session monitor */
 
     if (LoadLibraryA("riched20.dll") == NULL)
     {

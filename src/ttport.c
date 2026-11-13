@@ -85,6 +85,90 @@ void TT_SaveWindowPos(const char *key, HWND hwnd)
     WritePrivateProfileStringA("Windows Help", key, buf, TT_IniPath());
 }
 
+/* 3. Dialog placement. Wine's message boxes are unowned, and unowned dialogs
+ * open centred on the PRIMARY monitor. MODERN ACCOMMODATION: a per-thread
+ * CBT hook catches every top-level dialog (#32770: message boxes, common
+ * dialogs, the index property sheet) at creation, before it is shown, and
+ * centres it on the monitor of the help session (a visible MS_WINHELP
+ * window of this thread, else the saved main position). */
+static HHOOK tt_cbt;
+
+static BOOL CALLBACK tt_find_main(HWND h, LPARAM lp)
+{
+    char cls[32];
+    if (IsWindowVisible(h) && GetClassNameA(h, cls, sizeof(cls)) && !lstrcmpA(cls, "MS_WINHELP"))
+    {
+        *(HWND *)lp = h;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static HMONITOR tt_session_monitor(void)
+{
+    HWND main_wnd = NULL;
+    RECT saved;
+    EnumThreadWindows(GetCurrentThreadId(), tt_find_main, (LPARAM)&main_wnd);
+    if (main_wnd) return MonitorFromWindow(main_wnd, MONITOR_DEFAULTTOPRIMARY);
+    if (TT_LoadWindowPos("M_WindowPosition", &saved, NULL))
+        return MonitorFromRect(&saved, MONITOR_DEFAULTTOPRIMARY);
+    return NULL;
+}
+
+static LRESULT CALLBACK tt_cbt_proc(int code, WPARAM wp, LPARAM lp)
+{
+    if (code == HCBT_ACTIVATE)
+    {
+        /* fallback for dialogs that reposition themselves after creation */
+        HWND h = (HWND)wp;
+        char cls[16];
+        RECT r;
+        MONITORINFO mi;
+        HMONITOR mon;
+        if (GetClassNameA(h, cls, sizeof(cls)) && !lstrcmpA(cls, "#32770") &&
+            !(GetWindowLongA(h, GWL_STYLE) & WS_CHILD) && GetWindowRect(h, &r) &&
+            (mon = tt_session_monitor()) && MonitorFromRect(&r, MONITOR_DEFAULTTONULL) != mon)
+        {
+            mi.cbSize = sizeof(mi);
+            GetMonitorInfoA(mon, &mi);
+            SetWindowPos(h, NULL,
+                         mi.rcWork.left + (mi.rcWork.right - mi.rcWork.left - (r.right - r.left)) / 2,
+                         mi.rcWork.top + (mi.rcWork.bottom - mi.rcWork.top - (r.bottom - r.top)) / 2,
+                         0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+    if (code == HCBT_CREATEWND)
+    {
+        CBT_CREATEWNDA *cw = (CBT_CREATEWNDA *)lp;
+        CREATESTRUCTA *cs = cw->lpcs;
+        if (cs && !(cs->style & WS_CHILD) && cs->lpszClass == (LPCSTR)MAKEINTATOM(32770) &&
+            cs->cx > 0 && cs->cy > 0)
+        {
+            RECT wa;
+            MONITORINFO mi;
+            HMONITOR mon = tt_session_monitor();
+            mi.cbSize = sizeof(mi);
+            if (mon && GetMonitorInfoA(mon, &mi))
+            {
+                wa = mi.rcWork;
+                /* leave dialogs that already sit on that monitor alone */
+                POINT c = { cs->x + cs->cx / 2, cs->y + cs->cy / 2 };
+                if (cs->x == CW_USEDEFAULT || !PtInRect(&wa, c))
+                {
+                    cs->x = wa.left + (wa.right - wa.left - cs->cx) / 2;
+                    cs->y = wa.top + (wa.bottom - wa.top - cs->cy) / 2;
+                }
+            }
+        }
+    }
+    return CallNextHookEx(tt_cbt, code, wp, lp);
+}
+
+void TT_InstallDialogPlacement(void)
+{
+    if (!tt_cbt) tt_cbt = SetWindowsHookExA(WH_CBT, tt_cbt_proc, NULL, GetCurrentThreadId());
+}
+
 void TT_WorkAreaFromWindow(HWND hwnd, RECT *wa)
 {
     MONITORINFO mi;

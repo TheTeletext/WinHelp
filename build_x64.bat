@@ -12,12 +12,15 @@ flex -o build\macro.lex.yy.c src\macro.lex.l || goto fail
 
 windres -I src -O coff -o build\winhlp32.res src\winhlp32.rc || goto fail
 
-set CFLAGS=-O2 -g -Wall -include ttcompat.h -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -Icompat -Isrc
+set CFLAGS=-O2 -g -Wall -fno-strict-aliasing -include ttcompat.h -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -Icompat -Isrc
 
 gcc %CFLAGS% -mwindows -o build\%TARGET% ^
   src\callback.c src\hlpfile.c src\macro.c build\macro.lex.yy.c src\string.c src\winhelp.c ^
   compat\debug.c src\ttport.c build\winhlp32.res ^
   -lcomctl32 -lcomdlg32 -lshell32 -lgdi32 -luser32 || goto fail
+
+rem Test-only headless walker: the SAME parser object flags as the viewer.
+gcc %CFLAGS% -o build\hlpwalk.exe test\hlpwalk.c src\hlpfile.c compat\debug.c -lgdi32 -luser32 || goto fail
 
 echo BUILD SUCCESSFUL: build\%TARGET%
 exit /b 0
