@@ -169,6 +169,58 @@ void TT_InstallDialogPlacement(void)
     if (!tt_cbt) tt_cbt = SetWindowsHookExA(WH_CBT, tt_cbt_proc, NULL, GetCurrentThreadId());
 }
 
+/* 4. Pictures in Microsoft's RichEdit. Wine's winhlp32 streams each topic as
+ * RTF with "\dibitmap0" / "\wbitmap0" pictures. Wine's own RichEdit draws
+ * them; Microsoft's creates an embedded object for each and DROPS it unless
+ * the host supplies storage through IRichEditOleCallback::GetNewStorage
+ * (measured with test/reprobe.c: 0 pictures without the callback, all of
+ * them with it, in both riched20 and msftedit). MODERN ACCOMMODATION: this
+ * is the minimal callback; every other method declines or allows. Needs
+ * OleInitialize, done in WinMain. */
+#define COBJMACROS
+#include <ole2.h>
+#include <richedit.h>
+#include <richole.h>
+
+static HRESULT STDMETHODCALLTYPE tt_cb_qi(IRichEditOleCallback *t, REFIID r, void **o)
+{
+    if (IsEqualIID(r, &IID_IUnknown) || IsEqualIID(r, &IID_IRichEditOleCallback))
+    { *o = t; return S_OK; }
+    *o = NULL;
+    return E_NOINTERFACE;
+}
+static ULONG STDMETHODCALLTYPE tt_cb_addref(IRichEditOleCallback *t) { return 2; }   /* static object */
+static ULONG STDMETHODCALLTYPE tt_cb_release(IRichEditOleCallback *t) { return 1; }
+static HRESULT STDMETHODCALLTYPE tt_cb_newstg(IRichEditOleCallback *t, LPSTORAGE *stg)
+{
+    ILockBytes *lb;
+    HRESULT hr = CreateILockBytesOnHGlobal(NULL, TRUE, &lb);
+    if (FAILED(hr)) return hr;
+    hr = StgCreateDocfileOnILockBytes(lb, STGM_SHARE_EXCLUSIVE | STGM_CREATE | STGM_READWRITE, 0, stg);
+    lb->lpVtbl->Release(lb);
+    return hr;
+}
+static HRESULT STDMETHODCALLTYPE tt_cb_inplace(IRichEditOleCallback *t, LPOLEINPLACEFRAME *f,
+                                               LPOLEINPLACEUIWINDOW *d, LPOLEINPLACEFRAMEINFO i) { return E_NOTIMPL; }
+static HRESULT STDMETHODCALLTYPE tt_cb_showctx(IRichEditOleCallback *t, BOOL s) { return E_NOTIMPL; }
+static HRESULT STDMETHODCALLTYPE tt_cb_queryins(IRichEditOleCallback *t, LPCLSID c, LPSTORAGE s, LONG cp) { return S_OK; }
+static HRESULT STDMETHODCALLTYPE tt_cb_delobj(IRichEditOleCallback *t, LPOLEOBJECT o) { return S_OK; }
+static HRESULT STDMETHODCALLTYPE tt_cb_qacc(IRichEditOleCallback *t, LPDATAOBJECT d, CLIPFORMAT *f,
+                                            DWORD r, BOOL rl, HGLOBAL m) { return S_OK; }
+static HRESULT STDMETHODCALLTYPE tt_cb_ctxsens(IRichEditOleCallback *t, BOOL e) { return S_OK; }
+static HRESULT STDMETHODCALLTYPE tt_cb_clip(IRichEditOleCallback *t, CHARRANGE *c, DWORD r, LPDATAOBJECT *d) { return E_NOTIMPL; }
+static HRESULT STDMETHODCALLTYPE tt_cb_drag(IRichEditOleCallback *t, BOOL dr, DWORD k, LPDWORD e) { *e = DROPEFFECT_NONE; return S_OK; }
+static HRESULT STDMETHODCALLTYPE tt_cb_menu(IRichEditOleCallback *t, WORD s, LPOLEOBJECT o, CHARRANGE *c, HMENU *m) { return E_NOTIMPL; }
+static IRichEditOleCallbackVtbl tt_cb_vtbl = {
+    tt_cb_qi, tt_cb_addref, tt_cb_release, tt_cb_newstg, tt_cb_inplace, tt_cb_showctx,
+    tt_cb_queryins, tt_cb_delobj, tt_cb_qacc, tt_cb_ctxsens, tt_cb_clip, tt_cb_drag, tt_cb_menu };
+static IRichEditOleCallback tt_cb = { &tt_cb_vtbl };
+
+void TT_RichEditEnablePictures(HWND re)
+{
+    SendMessageA(re, EM_SETOLECALLBACK, 0, (LPARAM)&tt_cb);
+}
+
 void TT_WorkAreaFromWindow(HWND hwnd, RECT *wa)
 {
     MONITORINFO mi;

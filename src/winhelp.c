@@ -38,6 +38,7 @@
 #include "shellapi.h"
 #include "richedit.h"
 #include "commctrl.h"
+#include <ole2.h>
 #include "ttport.h"     /* TELETEXT PORT: saved positions, monitor work areas */
 
 #include "wine/debug.h"
@@ -285,9 +286,15 @@ HLPFILE_WINDOWINFO*     WINHELP_GetWindowInfo(HLPFILE* hlpfile, LPCSTR name)
 
     if (strcmp(name, "main") != 0)
     {
-        WINE_FIXME("Couldn't find window info for %s\n", debugstr_a(name));
-        assert(0);
-        return NULL;
+        /* TELETEXT PORT: Wine asserted here, which aborts the viewer on any
+         * help file that names a window it does not define. Fall back to
+         * the main window instead. */
+        WINE_FIXME("Couldn't find window info for %s, using main\n", debugstr_a(name));
+        name = "main";
+        if (hlpfile)
+            for (i = 0; i < hlpfile->numWindows; i++)
+                if (!lstrcmpiA(hlpfile->windows[i].name, name))
+                    return &hlpfile->windows[i];
     }
     if (!mwi.name[0])
     {
@@ -924,9 +931,15 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
             CreateWindowA(BUTTON_BOX_WIN_CLASS_NAME, "", WS_CHILD | WS_VISIBLE,
                          0, 0, 0, 0, win->hMainWnd, (HMENU)CTL_ID_BUTTON, Globals.hInstance, NULL);
 
-        hTextWnd = CreateWindowA(RICHEDIT_CLASS20A, NULL,
+        /* TELETEXT PORT: msftedit's RichEdit (4.1+) instead of riched20
+         * (Microsoft's RichEdit 3.0): it can hide the gridlines RichEdit
+         * draws on borderless tables (WinHelp draws none). Falls back to
+         * RichEdit20A when msftedit.dll is absent. */
+        hTextWnd = CreateWindowA(Globals.tt_msftedit ? "RICHEDIT50W" : RICHEDIT_CLASS20A, NULL,
                                 ES_MULTILINE | ES_READONLY | WS_CHILD | WS_HSCROLL | WS_VSCROLL | WS_VISIBLE,
                                 0, 0, 0, 0, win->hMainWnd, (HMENU)CTL_ID_TEXT, Globals.hInstance, NULL);
+        TT_RichEditEnablePictures(hTextWnd);   /* TELETEXT PORT: see ttport.c, 4 */
+        SendMessageW(hTextWnd, EM_SETEDITSTYLE, SES_HIDEGRIDLINES, SES_HIDEGRIDLINES); /* TELETEXT PORT */
         SendMessageW(hTextWnd, EM_SETEVENTMASK, 0,
                     SendMessageW(hTextWnd, EM_GETEVENTMASK, 0, 0) | ENM_MOUSEEVENTS);
         win->origRicheditWndProc = (WNDPROC)SetWindowLongPtrA(hTextWnd, GWLP_WNDPROC,
@@ -1805,7 +1818,13 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show)
 
     Globals.hInstance = hInstance;
     TT_InstallDialogPlacement();   /* TELETEXT PORT: dialogs on the session monitor */
+    /* TELETEXT PORT: Microsoft's RichEdit inserts RTF pictures as static
+     * OLE objects and silently drops them when OLE is not initialised in
+     * the process (Wine's RichEdit draws them itself, so Wine never called
+     * this). Without it no bitmap in any help file appears. */
+    OleInitialize(NULL);
 
+    Globals.tt_msftedit = !getenv("TTWINHLP_RICHED20") && LoadLibraryA("msftedit.dll") != NULL;   /* TELETEXT PORT; env = diagnostic */
     if (LoadLibraryA("riched20.dll") == NULL)
     {
         /* TELETEXT PORT: Wine's MessageBoxW accepts resource IDs as the text

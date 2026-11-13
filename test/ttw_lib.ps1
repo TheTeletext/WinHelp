@@ -72,9 +72,9 @@ function Get-TtwMonitor2 {
 
 # Writes a test INI that places the main window on monitor 2.
 function New-TtwIni {
-    param([string]$Path, [int]$Width = 640, [int]$Height = 480, [int]$Margin = 20)
+    param([string]$Path, [int]$Width = 640, [int]$Height = 480, [int]$Margin = 20, [int]$OffsetX = 860)  # right of the 86Box VM window
     $r = Get-TtwMonitor2
-    $x = $r.X + $Margin; $y = $r.Y + $Margin
+    $x = $r.X + $OffsetX; $y = $r.Y + $Margin
     $ini = "[Windows Help]`r`nM_WindowPosition=[$x,$y,$Width,$Height,0]`r`nH_WindowPosition=[$($x + $Width + 10),$y,300,300,0]`r`n"
     [System.IO.File]::WriteAllText($Path, $ini, [System.Text.Encoding]::ASCII)
     return $Path
@@ -133,4 +133,14 @@ function Test-TtwOnMonitor2 {
         }
     }
     return ,$bad
+}
+
+if (-not ("MgtWinTt" -as [type])) {
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class MgtWinTt {
+  [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int ht, bool repaint);
+}
+'@
 }

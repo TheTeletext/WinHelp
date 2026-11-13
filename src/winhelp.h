@@ -137,6 +137,7 @@ typedef struct
     WINHELP_DLL*        dlls;
     WINHELP_PAGESET     history;
     HFONT               hButtonFont;
+    BOOL                        tt_msftedit;    /* TELETEXT PORT: msftedit.dll loaded */
 } WINHELP_GLOBALS;
 
 extern const struct winhelp_callbacks

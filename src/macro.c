@@ -133,8 +133,21 @@ static void CALLBACK MACRO_EnableButton(LPCSTR id)
 void CALLBACK MACRO_JumpContents(LPCSTR lpszPath, LPCSTR lpszWindow)
 {
     HLPFILE*    hlpfile;
+    char        tmp[MAX_PATH];
+    char*       gt;
 
     WINE_TRACE("(%s, %s)\n", debugstr_a(lpszPath), debugstr_a(lpszWindow));
+    /* TELETEXT PORT: WinHelp 3.1's JumpContents takes ONE argument,
+     * `filename[>window]` (NetManage Chameleon's Glossary buttons:
+     * JumpContents(`gloshlp.hlp>2nd')). Wine looked the whole string up as a
+     * file name and failed. Split it as JumpId already does. */
+    if (lpszPath && !lpszWindow && (gt = strchr(lpszPath, '>')) && gt - lpszPath < MAX_PATH)
+    {
+        memcpy(tmp, lpszPath, gt - lpszPath);
+        tmp[gt - lpszPath] = 0;
+        lpszWindow = gt + 1;
+        lpszPath = tmp;
+    }
     if ((hlpfile = WINHELP_LookupHelpFile(lpszPath)))
         WINHELP_OpenHelpWindow(HLPFILE_PageByHash, hlpfile, 0,
                                WINHELP_GetWindowInfo(hlpfile, lpszWindow),

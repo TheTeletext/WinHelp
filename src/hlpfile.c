@@ -57,6 +57,9 @@ static inline unsigned GET_UINT(const BYTE* buffer, unsigned i)
 
 static HLPFILE *first_hlpfile = 0;
 
+struct RtfData;
+static BOOL TT_RtfEmitEmf(struct RtfData* rd, HENHMETAFILE hEMF, LONG w, LONG h);  /* TELETEXT PORT */
+
 
 /**************************************************************************
  * HLPFILE_BPTreeSearch
@@ -945,19 +948,47 @@ static BOOL HLPFILE_RtfAddTransparentBitmap(struct RtfData* rd, const BITMAPINFO
     hEMF = CloseEnhMetaFile(hdcEMF);
 
     /* generate rtf stream */
-    sz = GetEnhMetaFileBits(hEMF, 0, NULL);
+    /* TELETEXT PORT: emitted as a WMF by TT_RtfEmitEmf; Wine's bare
+     * \emfblip is rejected by Microsoft's RichEdit. */
+    (void)data; (void)sz;
+    ret = TT_RtfEmitEmf(rd, hEMF, bi->bmiHeader.biWidth, labs(bi->bmiHeader.biHeight));
+    DeleteEnhMetaFile(hEMF);
+
+    return ret;
+}
+
+/******************************************************************
+ *		TT_RtfEmitEmf                          (TELETEXT PORT)
+ *
+ * Wine emits transparent bitmaps as an EMF ("\emfblip"). Microsoft's
+ * RichEdit rejects that picture outright (measured with test/reprobe.c:
+ * \dibitmap0 and \wmetafile8 are accepted once an IRichEditOleCallback is
+ * set, \emfblip never), so every transparent bitmap vanished. Convert the
+ * EMF to a Windows metafile and emit "\wmetafile8", sized 1:1 in pixels
+ * (15 twips per pixel at 96 dpi) as WinHelp drew it.
+ */
+static BOOL TT_RtfEmitEmf(struct RtfData* rd, HENHMETAFILE hEMF, LONG w, LONG h)
+{
+    char        tmp[160];
+    BYTE*       data;
+    UINT        sz;
+    HDC         hdc = GetDC(0);
+    BOOL        ret = FALSE;
+
+    sz = GetWinMetaFileBits(hEMF, 0, NULL, MM_ANISOTROPIC, hdc);
     if (sz && (data = malloc(sz)))
     {
-        if (sz == GetEnhMetaFileBits(hEMF, sz, data))
+        if (sz == GetWinMetaFileBits(hEMF, sz, data, MM_ANISOTROPIC, hdc))
         {
-            ret = HLPFILE_RtfAddControl(rd, "{\\pict\\emfblip") &&
+            sprintf(tmp, "{\\pict\\wmetafile8\\picw%ld\\pich%ld\\picwgoal%ld\\pichgoal%ld ",
+                    w * 2540 / 96, h * 2540 / 96, w * 15, h * 15);
+            ret = HLPFILE_RtfAddControl(rd, tmp) &&
                 HLPFILE_RtfAddHexBytes(rd, data, sz) &&
                 HLPFILE_RtfAddControl(rd, "}");
         }
         free(data);
     }
-    DeleteEnhMetaFile(hEMF);
-
+    ReleaseDC(0, hdc);
     return ret;
 }
 
@@ -1039,22 +1070,42 @@ static BOOL HLPFILE_RtfAddBitmap(struct RtfData* rd, HLPFILE* file, const BYTE* 
 
     if (clrImportant == 1 && nc > 0)
     {
-        ret = HLPFILE_RtfAddTransparentBitmap(rd, bi, pict_beg, nc);
-        goto done;
+        /* TELETEXT PORT: Wine drew transparent bitmaps ({bmct} etc.) through
+         * a mask into an EMF. Microsoft's RichEdit rejects EMF pictures and
+         * the WMF conversion loses the mask ROPs (bullets came out as black
+         * blobs). The transparent colour is the last palette entry (Wine's
+         * mask used the same rule), so paint it in the topic background,
+         * WHITE, and draw the bitmap as an ordinary \dibitmap0 below.
+         * Known residue: a topic or region with a non-white background
+         * shows white boxes behind transparent bitmaps. */
+        bi->bmiColors[nc - 1].rgbRed = bi->bmiColors[nc - 1].rgbGreen =
+            bi->bmiColors[nc - 1].rgbBlue = 255;
+        if (0) ret = HLPFILE_RtfAddTransparentBitmap(rd, bi, pict_beg, nc);
     }
     if (!HLPFILE_RtfAddControl(rd, "{\\pict")) goto done;
     if (type == 0x06)
     {
-        sprintf(tmp, "\\dibitmap0\\picw%ld\\pich%ld",
-                bi->bmiHeader.biWidth, bi->bmiHeader.biHeight);
+        /* TELETEXT PORT: + \picwgoal/\pichgoal (15 twips per pixel at
+         * 96 dpi). Wine's RichEdit sized \dibitmap0 in pixels; Microsoft's,
+         * given no goal, blew a 32x32 icon up to over 1000 pixels. */
+        sprintf(tmp, "\\dibitmap0\\picw%ld\\pich%ld\\picwgoal%ld\\pichgoal%ld",
+                bi->bmiHeader.biWidth, bi->bmiHeader.biHeight,
+                bi->bmiHeader.biWidth * 15, bi->bmiHeader.biHeight * 15);
         if (!HLPFILE_RtfAddControl(rd, tmp)) goto done;
-        if (!HLPFILE_RtfAddHexBytes(rd, bi, sizeof(*bi) + nc * sizeof(RGBQUAD))) goto done;
+        /* TELETEXT PORT (upstream bug): sizeof(*bi) is sizeof(BITMAPINFO),
+         * which already holds ONE RGBQUAD, so Wine emitted 4 bytes of
+         * uninitialised heap between the palette and the pixels; Microsoft's
+         * RichEdit read them as pixels and every bitmap came out shifted
+         * 8 pixels (4bpp) right, wrapping. Header + nc palette entries only. */
+        if (!HLPFILE_RtfAddHexBytes(rd, bi, sizeof(bi->bmiHeader) + nc * sizeof(RGBQUAD))) goto done;
     }
     else
     {
-        sprintf(tmp, "\\wbitmap0\\wbmbitspixel%d\\wbmplanes%d\\picw%ld\\pich%ld",
+        /* TELETEXT PORT: + goals, as for \dibitmap0 above */
+        sprintf(tmp, "\\wbitmap0\\wbmbitspixel%d\\wbmplanes%d\\picw%ld\\pich%ld\\picwgoal%ld\\pichgoal%ld",
                 bi->bmiHeader.biBitCount, bi->bmiHeader.biPlanes,
-                bi->bmiHeader.biWidth, bi->bmiHeader.biHeight);
+                bi->bmiHeader.biWidth, bi->bmiHeader.biHeight,
+                bi->bmiHeader.biWidth * 15, bi->bmiHeader.biHeight * 15);
         if (!HLPFILE_RtfAddControl(rd, tmp)) goto done;
     }
     if (!HLPFILE_RtfAddHexBytes(rd, pict_beg, bi->bmiHeader.biSizeImage)) goto done;

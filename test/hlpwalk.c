@@ -20,7 +20,10 @@
 #include <string.h>
 #include <windows.h>
 #include <richedit.h>
+#include <ole2.h>
+#include <richole.h>
 #include "hlpfile.h"
+#include "ttport.h"
 
 struct sink { const char *p; const char *end; };
 
@@ -62,16 +65,18 @@ int main(int argc, char **argv)
     HLPFILE_PAGE *page;
     HWND re;
     unsigned pages = 0, browse_fail = 0, empty = 0, links = 0, popups = 0, macros = 0,
-             picts = 0, keywords = 0;
+             picts = 0, keywords = 0, objects = 0;
     unsigned long chars = 0, rtf_bytes = 0;
     DWORD t0 = GetTickCount();
 
     if (argc < 2) { fprintf(stderr, "usage: hlpwalk FILE.HLP\n"); return 1; }
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    OleInitialize(NULL);
     if (!LoadLibraryA("riched20.dll")) { printf("WALK %s ERROR no-riched20\n", argv[1]); return 3; }
-    re = CreateWindowExA(0, "RichEdit20A", NULL, ES_MULTILINE | ES_READONLY | WS_POPUP,
+    re = CreateWindowExA(0, LoadLibraryA("msftedit.dll") ? "RICHEDIT50W" : "RichEdit20A", NULL,  /* as the viewer */ ES_MULTILINE | ES_READONLY | WS_POPUP,
                          0, 0, 600, 400, NULL, NULL, GetModuleHandleA(NULL), NULL);
 
+    if (re) TT_RichEditEnablePictures(re);   /* exactly as the viewer */
     hf = HLPFILE_ReadHlpFile(argv[1]);
     if (!hf) { printf("WALK %s LOADFAIL\n", argv[1]); return 2; }
 
@@ -84,6 +89,8 @@ int main(int argc, char **argv)
         pages++;
         memset(&rd, 0, sizeof(rd));
         if (!HLPFILE_BrowsePage(page, &rd, 1, 0)) { browse_fail++; free(rd.data); continue; }
+        if (argc > 2 && atoi(argv[2]) == (int)pages)   /* hlpwalk FILE N: dump topic N's RTF to stderr */
+            fwrite(rd.data, 1, rd.ptr - rd.data, stderr);
         rtf_bytes += rd.ptr - rd.data;
         picts += count_sub(rd.data, rd.ptr - rd.data, "\\pict");
         for (l = page->first_link; l; l = l->next)
@@ -100,14 +107,19 @@ int main(int argc, char **argv)
             SendMessageA(re, WM_SETTEXT, 0, (LPARAM)"");
             SendMessageA(re, EM_STREAMIN, SF_RTF, (LPARAM)&es);
             n = GetWindowTextLengthA(re);
+            {
+                IRichEditOle *ole = NULL;
+                SendMessageA(re, EM_GETOLEINTERFACE, 0, (LPARAM)&ole);
+                if (ole) { objects += ole->lpVtbl->GetObjectCount(ole); ole->lpVtbl->Release(ole); }
+            }
             if (n <= 0) empty++;
             chars += n > 0 ? n : 0;
         }
         free(rd.data);
     }
     printf("WALK %s ver=%u topics=%u browse_fail=%u empty=%u jumps=%u popups=%u macrolinks=%u "
-           "picts=%u bmps=%u keywords=%u windows=%u chars=%lu rtf=%lu ms=%lu\n",
-           argv[1], hf->version, pages, browse_fail, empty, links, popups, macros, picts,
+           "picts=%u objects=%u bmps=%u keywords=%u windows=%u chars=%lu rtf=%lu ms=%lu\n",
+           argv[1], hf->version, pages, browse_fail, empty, links, popups, macros, picts, objects,
            hf->numBmps, keywords, hf->numWindows, chars, rtf_bytes,
            (unsigned long)(GetTickCount() - t0));
     return 0;

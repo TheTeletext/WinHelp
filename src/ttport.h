@@ -11,5 +11,6 @@ BOOL TT_LoadWindowPos(const char *key, RECT *rc, BOOL *maximized);
 void TT_SaveWindowPos(const char *key, HWND hwnd);
 void TT_WorkAreaFromWindow(HWND hwnd, RECT *wa);
 void TT_InstallDialogPlacement(void);
+void TT_RichEditEnablePictures(HWND re);
 
 #endif
