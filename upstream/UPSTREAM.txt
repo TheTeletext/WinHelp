@@ -1,0 +1,2 @@
+wine-mirror/wine cc5d1d86ee7d60649e6f858106db046c77c8b12c 2026-11-12 programs/winhlp32
+reactos/reactos f3d34be5653db7a07bcb289a3c9fb84c4cb7a860 2026-11-14 base/applications/winhlp32
