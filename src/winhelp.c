@@ -301,12 +301,10 @@ HLPFILE_WINDOWINFO*     WINHELP_GetWindowInfo(HLPFILE* hlpfile, LPCSTR name)
         strcpy(mwi.type, "primary");
         strcpy(mwi.name, "main");
         if (hlpfile && hlpfile->lpszTitle[0])
-        {
-            char tmp[40];
-            LoadStringA(Globals.hInstance, STID_WINE_HELP, tmp, sizeof(tmp));
-            _snprintf(mwi.caption, sizeof(mwi.caption), "%s %s - %s",
-                      hlpfile->lpszTitle, tmp, hlpfile->lpszPath);
-        }
+            /* TELETEXT PORT: WinHelp 3.1 captions the main window with the
+             * file's TITLE alone (verified in the WfW 3.11 VM); Wine added
+             * "Wine Help - <path>". Same choice as ReactOS's __REACTOS__ branch. */
+            snprintf(mwi.caption, sizeof(mwi.caption), "%s", hlpfile->lpszTitle);
         else
             LoadStringA(Globals.hInstance, STID_WINE_HELP, mwi.caption, sizeof(mwi.caption));
         mwi.origin.x = mwi.origin.y = mwi.size.cx = mwi.size.cy = CW_USEDEFAULT;

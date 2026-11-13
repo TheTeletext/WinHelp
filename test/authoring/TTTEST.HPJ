@@ -1,0 +1,21 @@
+; The Teletext WinHelp: authoring-chain proof (WinHelp Revival phase 1)
+[OPTIONS]
+TITLE=Teletext Test Help
+CONTENTS=contents
+COMPRESS=FALSE
+WARNING=3
+REPORT=ON
+
+[FILES]
+TTTEST.RTF
+
+[BITMAPS]
+TTLOGO.BMP
+
+[CONFIG]
+BrowseButtons()
+
+[MAP]
+contents     1
+connecting   2
+settings     3
