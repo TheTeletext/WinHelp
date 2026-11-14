@@ -55,22 +55,23 @@ struct tt_search
 };
 
 /* Client-area geometry in pixels, measured from the real dialog at 800x600
- * (s0/s1 screens; 1 guest pixel = 1 pixel here). */
+ * (s0/s1 screens; 1 guest pixel = 1 pixel here), then edge by edge
+ * against the real dialog's pixels (2026-11-13). */
 static const struct { int id, x, y, w, h; } tt_layout[] =
 {
-    { IDC_TTS_PROMPT1, 7,   11, 270, 28 },
-    { IDCANCEL,        286, 11, 94,  23 },
-    { IDC_TTS_SHOW,    286, 39, 94,  23 },
+    { IDC_TTS_PROMPT1, 6,   10, 270, 28 },   /* pixel-matched 2026-11-13 */
+    { IDCANCEL,        286, 11, 95,  23 },   /* real 292..386 in the dialog */
+    { IDC_TTS_SHOW,    286, 39, 95,  23 },
     { IDC_TTS_EDIT,    6,   46, 259, 23 },
-    { IDC_TTS_KEYS,    24,  68, 358, 81 },
+    { IDC_TTS_KEYS,    24,  68, 357, 81 },
     { IDC_TTS_RULE,    6,   158, 376, 2 },
-    { IDC_TTS_PROMPT2, 7,   172, 270, 15 },
-    { IDC_TTS_GOTO,    286, 167, 94,  23 },
-    { IDC_TTS_TOPICS,  5,   202, 378, 92 },
+    { IDC_TTS_PROMPT2, 6,   171, 270, 15 },
+    { IDC_TTS_GOTO,    286, 167, 95,  23 },
+    { IDC_TTS_TOPICS,  5,   201, 377, 93 },   /* real 11..387 x 225..317 */
 };
 #define TT_CLIENT_W 389
-#define TT_BAND_IN  2   /* see tts_layout */
-#define TT_CLIENT_H 300
+#define TT_LAYOUT_DX 1  /* the table was measured from x 151; the real client starts at 150 */
+#define TT_CLIENT_H 302   /* real client rows 117..418 */
 
 static void tts_kw_entry(const BYTE *p, int *count, DWORD *kwoff)
 {
@@ -191,22 +192,26 @@ static LRESULT CALLBACK tts_edit_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 static void tts_layout(HWND dlg, struct tt_search *s)
 {
-    /* TELETEXT PORT: + the 2 px of the 3.1 dialog band that w31 paints
-     * inside the client (real frame: 1 black + 4 navy); controls move by 2 */
-    RECT rc = { 0, 0, TT_CLIENT_W + 2 * TT_BAND_IN, TT_CLIENT_H + 2 * TT_BAND_IN }, wr, wa;
+    /* the window around the measured client, with whatever non-client
+     * area the window really has (w31 lays out the 3.1 dialog frame:
+     * 5 px sides and bottom, 24 px top; AdjustWindowRectEx knows only
+     * Windows' own) */
+    RECT rc = { 0, 0, TT_CLIENT_W, TT_CLIENT_H }, wr, wa, cr;
     unsigned i;
     HWND owner = GetWindow(dlg, GW_OWNER);
 
-    AdjustWindowRectEx(&rc, GetWindowLongA(dlg, GWL_STYLE), FALSE,
-                       GetWindowLongA(dlg, GWL_EXSTYLE));
+    GetWindowRect(dlg, &wr);
+    GetClientRect(dlg, &cr);
+    rc.right  += (wr.right - wr.left) - cr.right;
+    rc.bottom += (wr.bottom - wr.top) - cr.bottom;
     /* Real WinHelp opens Search near the top left of the help window
-     * (VM: dialog at +34,+42 from the main window); keep it on the owner's
-     * monitor (TELETEXT PORT: multi-monitor). */
+     * (VM pixel scan: outer corner +36,+46 from the main window's); keep
+     * it on the owner's monitor (TELETEXT PORT: multi-monitor). */
     GetWindowRect(owner ? owner : dlg, &wr);
     TT_WorkAreaFromWindow(owner ? owner : dlg, &wa);
     {
         int w = rc.right - rc.left, h = rc.bottom - rc.top;
-        int x = wr.left + 34, y = wr.top + 42;
+        int x = wr.left + 36, y = wr.top + 46;
         if (x + w > wa.right) x = wa.right - w;
         if (y + h > wa.bottom) y = wa.bottom - h;
         if (x < wa.left) x = wa.left;
@@ -225,7 +230,7 @@ static void tts_layout(HWND dlg, struct tt_search *s)
             SetWindowLongA(c, GWL_EXSTYLE, GetWindowLongA(c, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
             SetWindowLongA(c, GWL_STYLE, GetWindowLongA(c, GWL_STYLE) | WS_BORDER);
         }
-        SetWindowPos(c, NULL, tt_layout[i].x + TT_BAND_IN, tt_layout[i].y + TT_BAND_IN, tt_layout[i].w,
+        SetWindowPos(c, NULL, tt_layout[i].x + TT_LAYOUT_DX, tt_layout[i].y, tt_layout[i].w,
                      tt_layout[i].h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         SendMessageA(c, WM_SETFONT, (WPARAM)s->font, FALSE);
     }
@@ -256,6 +261,29 @@ static INT_PTR CALLBACK tts_dlg_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                               ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                               DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, "MS Sans Serif");
         tts_layout(dlg, s);
+        {
+            /* Windows 3.1 set the prompt's two lines 14 px apart (pixel
+             * scan), a static's DrawText 13 (the font height): line 1
+             * keeps the static and its mnemonic, line 2 is its own */
+            RECT pr;
+            HWND p1 = GetDlgItem(dlg, IDC_TTS_PROMPT1), p2;
+            char line2[128] = "Then choose Show Topics.";
+            char full[256], *nl;
+            GetWindowTextA(p1, full, sizeof full);
+            if ((nl = strchr(full, '\n')))
+            {
+                lstrcpynA(line2, nl + 1, sizeof line2);
+                *nl = 0;
+                SetWindowTextA(p1, full);
+                GetWindowRect(p1, &pr);
+                MapWindowPoints(NULL, dlg, (POINT *)&pr, 2);
+                SetWindowPos(p1, NULL, 0, 0, pr.right - pr.left, 14, SWP_NOMOVE | SWP_NOZORDER);
+                p2 = CreateWindowA("STATIC", line2, WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+                                   pr.left, pr.top + 14, pr.right - pr.left, 14, dlg, NULL,
+                                   Globals.hInstance, NULL);
+                SendMessageA(p2, WM_SETFONT, (WPARAM)s->font, FALSE);
+            }
+        }
         HLPFILE_BPTreeEnum(s->hlpfile->kwbtree, cb_tts_keyword, GetDlgItem(dlg, IDC_TTS_KEYS));
         SendDlgItemMessageA(dlg, IDC_TTS_KEYS, LB_SETCURSEL, 0, 0);
         EnableWindow(GetDlgItem(dlg, IDC_TTS_SHOW), FALSE);

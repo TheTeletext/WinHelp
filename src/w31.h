@@ -51,6 +51,8 @@ extern HFONT  g_w31_font_bold;   /* MS Sans Serif 8 bold               */
 void w31_init(void);
 /* TELETEXT PORT: plain Windows 3.1 (white dialogs, 1px black fields) */
 void w31_set_plain(BOOL on);
+/* TELETEXT PORT: the window's menu (w31 draws plain-3.1 menu bars itself) */
+HMENU w31_get_menu(HWND h);
 void w31_shutdown(void);
 
 /* Bevels. Each draws on the edge pixels of rc and nothing inside. */

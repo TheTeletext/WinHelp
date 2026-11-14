@@ -515,7 +515,7 @@ void CALLBACK MACRO_HelpOnTop(void)
         WINE_ERR("could not find the main window!\n");
         return;
     }
-    menu = GetMenu(main_wnd);
+    menu = w31_get_menu(main_wnd);   /* TELETEXT PORT: w31 keeps the menu */
 
     on_top = !on_top;
     if (on_top) {
@@ -534,7 +534,9 @@ void CALLBACK MACRO_History(void)
     if (Globals.active_win && !Globals.active_win->hHistoryWnd)
     {
         /* TELETEXT PORT (item 8): the real caption is "Windows Help History" */
-        HWND hWnd = CreateWindowA(HISTORY_WIN_CLASS_NAME, "Windows Help History", WS_OVERLAPPEDWINDOW,
+        HWND hWnd = CreateWindowA(HISTORY_WIN_CLASS_NAME, "Windows Help History",
+                                 /* TELETEXT PORT: sizable, system box only (real_history.png) */
+                                 WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME,
                                  0, 0, 0, 0, 0, 0, Globals.hInstance, Globals.active_win);
         if (hWnd) w31_caption_attach(hWnd);   /* TELETEXT PORT (gap 4): 3.1 title bar */
         ShowWindow(hWnd, SW_NORMAL);

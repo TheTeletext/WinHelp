@@ -27,7 +27,7 @@
 #define POPUP_YDISTANCE         20
 #define SHADOW_DX               10
 #define SHADOW_DY               10
-#define BUTTON_CX               9   /* TELETEXT PORT: was 6; WinHelp 3.1 buttons are 60x21 for "Contents" (VM, pixel scan) */
+#define BUTTON_CX               8   /* TELETEXT PORT: was 6; WinHelp 3.1 buttons are 59x21 for "Contents" (VM, pixel scan: frames at 4, 63, 122, 181) */
 #define BUTTON_CY               8   /* TELETEXT PORT: was 6 */
 
 #ifndef RC_INVOKED

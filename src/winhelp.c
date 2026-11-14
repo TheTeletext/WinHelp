@@ -1086,6 +1086,71 @@ static HLPFILE_LINK* WINHELP_FindLink(WINHELP_WINDOW* win, LPARAM pos)
     return link;
 }
 
+/* TELETEXT PORT: WinHelp 3.1 underlines a popup hotspot with dots 2 px
+ * on, 2 px off, starting at its first character (pixel scan of TTTEST's
+ * "modem"); Microsoft's RichEdit draws its dotted underline 3 on, 3 off.
+ * After RichEdit paints, the underline row under each popup hotspot is
+ * found (RichEdit's own 3/3 run) and redrawn in the 3.1 pattern. */
+static void TT_FixPopupUnderlines(HWND hText, HLPFILE_LINK *links)
+{
+    HLPFILE_LINK *l;
+    HDC dc;
+    RECT cr;
+    if (!links || getenv("TTWINHLP_RE_DOTS")) return;
+    dc = GetDC(hText);
+    if (!dc) return;
+    GetClientRect(hText, &cr);
+    for (l = links; l; l = l->next)
+    {
+        DWORD cp;
+        if (l->cookie != hlp_link_popup || l->bHotSpot || !l->bClrChange || l->cpMax <= l->cpMin) continue;
+        cp = l->cpMin;
+        while (cp < l->cpMax)
+        {
+            POINTL p0, p, pn;
+            DWORD c = cp, last = cp;
+            int x0, x1, row = -1, y;
+            COLORREF ink, bg;
+            SendMessageW(hText, EM_POSFROMCHAR, (WPARAM)&p0, cp);
+            /* the run of characters on this line */
+            for (c = cp + 1; c < l->cpMax; c++)
+            {
+                SendMessageW(hText, EM_POSFROMCHAR, (WPARAM)&p, c);
+                if (p.y != p0.y) break;
+                last = c;
+            }
+            SendMessageW(hText, EM_POSFROMCHAR, (WPARAM)&pn, last + 1);
+            x0 = p0.x;
+            if (pn.y == p0.y && pn.x > x0) x1 = pn.x;
+            else
+            {
+                SendMessageW(hText, EM_POSFROMCHAR, (WPARAM)&p, last);
+                x1 = p.x + 6;
+            }
+            if (p0.y >= cr.top && p0.y < cr.bottom && x1 - x0 >= 6)
+            {
+                for (y = p0.y + 4; y < p0.y + 32 && y < cr.bottom; y++)
+                {
+                    COLORREF a = GetPixel(dc, x0, y), b = GetPixel(dc, x0 + 1, y), d = GetPixel(dc, x0 + 2, y);
+                    COLORREF e = GetPixel(dc, x0 + 3, y), f = GetPixel(dc, x0 + 4, y), g = GetPixel(dc, x0 + 5, y);
+                    if (a == b && b == d && e == f && f == g && a != e && GetPixel(dc, x0 + 6, y) == a)
+                    { row = y; break; }
+                }
+                if (row >= 0)
+                {
+                    int x;
+                    ink = GetPixel(dc, x0, row);
+                    bg = GetPixel(dc, x0 + 3, row);
+                    for (x = x0; x < x1; x++)
+                        SetPixelV(dc, x, row, ((x - x0) % 4) < 2 ? ink : bg);
+                }
+            }
+            cp = last + 1;
+        }
+    }
+    ReleaseDC(hText, dc);
+}
+
 static LRESULT CALLBACK WINHELP_RicheditWndProc(HWND hWnd, UINT msg,
                                                 WPARAM wParam, LPARAM lParam)
 {
@@ -1094,6 +1159,15 @@ static LRESULT CALLBACK WINHELP_RicheditWndProc(HWND hWnd, UINT msg,
     POINT pt;
     switch(msg)
     {
+        case WM_PAINT:
+        {
+            /* TELETEXT PORT: popup hotspots' 3.1 dotted underline */
+            LRESULT r = CallWindowProcA(win->origRicheditWndProc, hWnd, msg, wParam, lParam);
+            if (win->page)
+                TT_FixPopupUnderlines(hWnd, GetDlgCtrlID(hWnd) == CTL_ID_NSR ?
+                                      win->page->tt_first_link_nsr : win->page->first_link);
+            return r;
+        }
         case WM_SETCURSOR:
             messagePos = GetMessagePos();
             pt.x = (short)LOWORD(messagePos);
@@ -1277,7 +1351,7 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
          * the window (pixel scan, TTTEST); RichEdit's own inset is ~5 px.
          * Popups have their measured padding instead (gap 5). */
         if (!bPopup)
-            SendMessageW(hTextWnd, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(7, 0));
+            SendMessageW(hTextWnd, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(8, 0));
         SendMessageW(hTextWnd, EM_SETEVENTMASK, 0,
                     SendMessageW(hTextWnd, EM_GETEVENTMASK, 0, 0) | ENM_MOUSEEVENTS);
         win->origRicheditWndProc = (WNDPROC)SetWindowLongPtrA(hTextWnd, GWLP_WNDPROC,
@@ -1291,7 +1365,7 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
                                       0, 0, 0, 0, win->hMainWnd, (HMENU)CTL_ID_NSR, Globals.hInstance, NULL);
             TT_RichEditEnablePictures(hNsr);
             SendMessageW(hNsr, EM_SETEDITSTYLE, SES_HIDEGRIDLINES, SES_HIDEGRIDLINES);
-            SendMessageW(hNsr, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(7, 0));
+            SendMessageW(hNsr, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(8, 0));
             SendMessageW(hNsr, EM_SETEVENTMASK, 0,
                          SendMessageW(hNsr, EM_GETEVENTMASK, 0, 0) | ENM_MOUSEEVENTS | ENM_REQUESTRESIZE);
             SetWindowLongPtrA(hNsr, GWLP_WNDPROC, (LONG_PTR)WINHELP_RicheditWndProc);
@@ -1600,6 +1674,19 @@ static LRESULT CALLBACK WINHELP_ButtonBoxWndProc(HWND hWnd, UINT msg, WPARAM wPa
         winpos->cy = y + (x ? button_size.cy : 0);
         break;
 
+    /* TELETEXT PORT: WinHelp 3.1's bar is #808080 with a 1 px black rule
+     * along its bottom, right across the empty part (pixel scan) */
+    case WM_ERASEBKGND:
+    {
+        RECT rc;
+        HDC dc = (HDC)wParam;
+        GetClientRect(hWnd, &rc);
+        FillRect(dc, &rc, GetStockObject(GRAY_BRUSH));
+        rc.top = rc.bottom - 1;
+        FillRect(dc, &rc, GetStockObject(BLACK_BRUSH));
+        return 1;
+    }
+
     case WM_COMMAND:
         SendMessageW(GetParent(hWnd), msg, wParam, lParam);
         break;
@@ -1625,6 +1712,19 @@ static LRESULT CALLBACK WINHELP_ButtonBoxWndProc(HWND hWnd, UINT msg, WPARAM wPa
  *
  *
  */
+
+/* TELETEXT PORT: the History list's face, as the Search dialog's lists
+ * (MS Sans Serif 8 bold, 13 px rows, pixel-matched to WinHelp 3.1) */
+static HFONT TT_HistFont(void)
+{
+    static HFONT f;
+    if (!f)
+        f = CreateFontA(-MulDiv(8, 96, 72), 0, 0, 0, FW_BOLD, 0, 0, 0,
+                        ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                        DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, "MS Sans Serif");
+    return f;
+}
+
 static LRESULT CALLBACK WINHELP_HistoryWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     WINHELP_WINDOW*     win;
@@ -1661,11 +1761,10 @@ static LRESULT CALLBACK WINHELP_HistoryWndProc(HWND hWnd, UINT msg, WPARAM wPara
             HWND main_wnd = win ? win->hMainWnd : NULL;
             TT_WorkAreaFromWindow(main_wnd, &wa);
             if (!main_wnd || !GetWindowRect(main_wnd, &main_rc)) main_rc = wa;
-            SetRect(&r, 0, 0, 30 * tm.tmAveCharWidth,
-                    ARRAY_SIZE(Globals.history.set) * tm.tmHeight);
-            AdjustWindowRect(&r, GetWindowLongW(hWnd, GWL_STYLE), FALSE);
-            OffsetRect(&r, -r.left, -r.top);
-            OffsetRect(&r, main_rc.right, main_rc.top);
+            /* TELETEXT PORT: WinHelp 3.1 opened it 266 x 200 at the main
+             * window's origin + (157, 200) (real_history.png, main 109,47) */
+            SetRect(&r, 0, 0, 266, 200);
+            OffsetRect(&r, main_rc.left + 157, main_rc.top + 200);
             if (r.right > wa.right) OffsetRect(&r, wa.right - r.right, 0);
             if (r.left < wa.left) OffsetRect(&r, wa.left - r.left, 0);
             if (r.bottom > wa.bottom) OffsetRect(&r, 0, wa.bottom - r.bottom);
@@ -1678,9 +1777,14 @@ static LRESULT CALLBACK WINHELP_HistoryWndProc(HWND hWnd, UINT msg, WPARAM wPara
      * 3.1's list box: a click selects, a double-click or Enter opens, Up and
      * Down move the navy highlight. Wine opened the topic on a single click
      * and highlighted nothing. */
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+        InvalidateRect(hWnd, NULL, TRUE);   /* TELETEXT PORT: the focus rectangle */
+        break;
     case WM_LBUTTONDOWN:
     case WM_LBUTTONDBLCLK:
         hDc = GetDC(hWnd);
+        SelectObject(hDc, TT_HistFont());
         GetTextMetricsW(hDc, &tm);
         i = HIWORD(lParam) / tm.tmHeight;
         ReleaseDC(hWnd, hDc);
@@ -1700,6 +1804,7 @@ static LRESULT CALLBACK WINHELP_HistoryWndProc(HWND hWnd, UINT msg, WPARAM wPara
         break;
     case WM_PAINT:
         hDc = BeginPaint(hWnd, &ps);
+        SelectObject(hDc, TT_HistFont());   /* TELETEXT PORT */
         GetTextMetricsW(hDc, &tm);
 
         for (i = 0; i < Globals.history.index; i++)
@@ -1742,6 +1847,22 @@ static LRESULT CALLBACK WINHELP_HistoryWndProc(HWND hWnd, UINT msg, WPARAM wPara
                 lstrcpynA(&buffer[len], Globals.history.set[i].page->lpszTitle, sizeof(buffer) - len);
                 TextOutA(hDc, 2, i * tm.tmHeight, buffer, strlen(buffer));
             }
+        }
+        if (GetFocus() == hWnd && tt_hist_sel < Globals.history.index)
+        {
+            /* TELETEXT PORT: 3.1's list box focus rectangle, dotted XOR
+             * round the selected row (#FFFF7F on navy, real_history.png) */
+            RECT row;
+            int x, y;
+            GetClientRect(hWnd, &row);
+            row.top = tt_hist_sel * tm.tmHeight; row.bottom = row.top + tm.tmHeight;
+            /* four 1 px strips PATINVERTed with the gray pattern: a dot
+             * where x + y is odd, the corners inverted twice (back to the
+             * background); Windows 11's DrawFocusRect draws it solid */
+#define TT_INV(px, py) do { if (((px) + (py)) & 1) SetPixelV(hDc, (px), (py), GetPixel(hDc, (px), (py)) ^ 0xFFFFFF); } while (0)
+            for (x = row.left; x < row.right; x++) { TT_INV(x, row.top); TT_INV(x, row.bottom - 1); }
+            for (y = row.top; y < row.bottom; y++) { TT_INV(row.left, y); TT_INV(row.right - 1, y); }
+#undef TT_INV
         }
         EndPaint(hWnd, &ps);
         break;
@@ -1948,7 +2069,7 @@ static LRESULT CALLBACK WINHELP_MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, 
             (win = (WINHELP_WINDOW*) GetWindowLongPtrW(hWnd, 0)))
         {
             char ch = tt_lower((BYTE)lParam);
-            HMENU menu = GetMenu(hWnd);
+            HMENU menu = w31_get_menu(hWnd);   /* TELETEXT PORT: w31 keeps the menu */
             int i, n = menu ? GetMenuItemCount(menu) : 0;
             BOOL in_menu = FALSE;
             for (i = 0; i < n && !in_menu; i++)

@@ -26,6 +26,8 @@
 #include "w31.h"               /* TELETEXT PORT: was suite_w31.h */
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>     /* TELETEXT PORT: nc_trace */
+#include <stdarg.h>
 
 /* The shell's chrome font (src/suite_fonts.c), MS Sans Serif 8: one of the
  * two fonts the field rule below turns bold. Declared here rather than by
@@ -41,27 +43,12 @@ static BOOL g_w31_plain = FALSE;
 void w31_set_plain(BOOL on) { g_w31_plain = on; }
 /* TELETEXT PORT: frame rules for plain 3.1 (see cap_frame) */
 static int g_cap_frame_active = 1;   /* set by cap_paint for cap_frame */
-/* TELETEXT PORT (operator request 2026-11-13): a sizable frame 4 px wide,
- * as Windows 3.1's (black, 2 px gray, black), not Windows 11's 8. Windows
- * keeps WS_THICKFRAME (it still does the resizing); WM_NCCALCSIZE hands it
- * the window rectangle grown by W31_SLIM_OUT per side, so it lays out its
- * 8 px frame, the caption and the menu bar as if the outer 4 px were
- * outside the window. Not while maximized or minimized. */
-#define W31_SLIM_OUT  4
-static BOOL cap_slim(HWND h)
-{
-    LONG st;
-    if (!g_w31_plain || !h) return FALSE;
-    st = GetWindowLongA(h, GWL_STYLE);
-    return (st & WS_THICKFRAME) && (st & WS_CAPTION) == WS_CAPTION &&
-           !(st & WS_MAXIMIZE) && !(st & WS_MINIMIZE);
-}
 /* the frame widths w31 paints with: Windows' own, less the slim offset */
 static void cap_borders(HWND h, const WINDOWINFO *wi, int *bx, int *by)
 {
+    (void)h;
     *bx = (int)wi->cxWindowBorders;
     *by = (int)wi->cyWindowBorders;
-    if (cap_slim(h)) { *bx -= W31_SLIM_OUT; *by -= W31_SLIM_OUT; }
 }
 
 HBRUSH g_w31_br_face   = NULL;
@@ -238,13 +225,54 @@ void w31_draw_text_disabled(HDC hdc, const char *s, int n, RECT *rc, UINT fmt)
     SetBkMode(mem, TRANSPARENT);
     SetTextColor(mem, RGB(0, 0, 0));
     SetRect(&r0, 0, 0, w, h);
-    DrawTextA(mem, s, n, &r0, fmt);
+    {
+        int len = n < 0 ? (int)strlen(s) : n;
+        const char *amp = memchr(s, '&', (size_t)len);
+        if (g_w31_plain && amp && amp + 1 < s + len && amp[1] != '&' &&
+            !(fmt & (DT_NOPREFIX | DT_VCENTER | DT_CENTER | DT_RIGHT))) {
+            /* TELETEXT PORT: the 3.1 mnemonic underline, one pixel past
+             * the character, as w31_draw_button's (then stippled) */
+            char pre[256];
+            SIZE a, c;
+            TEXTMETRICA tmu;
+            int k = (int)(amp - s);
+            DrawTextA(mem, s, n, &r0, fmt | DT_HIDEPREFIX);
+            if (k < (int)sizeof pre) {
+                memcpy(pre, s, (size_t)k);
+                GetTextExtentPoint32A(mem, pre, k, &a);
+                GetTextExtentPoint32A(mem, amp + 1, 1, &c);
+                GetTextMetricsA(mem, &tmu);
+                {
+                    RECT u;
+                    SetRect(&u, a.cx, tmu.tmAscent + 1, a.cx + c.cx + 1, tmu.tmAscent + 2);
+                    FillRect(mem, &u, (HBRUSH)GetStockObject(BLACK_BRUSH));
+                }
+            }
+        } else
+            DrawTextA(mem, s, n, &r0, fmt);
+    }
     GdiFlush();
-    for (y = 0; y < h; y++) {
-        const DWORD *row = (const DWORD *)bits + (size_t)y * w;
-        for (x = 0; x < w; x++)
-            if ((row[x] & 0xFFFFFF) == 0 && ((rc->left + x + rc->top + y) & 1) == 0)
-                SetPixelV(hdc, rc->left + x, rc->top + y, W31_TEXT);
+    {
+        /* TELETEXT PORT: Windows 3.1's gray-text pattern is aligned to the
+         * top-level window (pixel scans: the main window's Back and the
+         * Search dialog's Show Topics agree only that way) */
+        int ox = 0, oy = 0, want = 0;
+        if (g_w31_plain) {
+            POINT org;
+            HWND dw = WindowFromDC(hdc), top = dw ? GetAncestor(dw, GA_ROOT) : NULL;
+            RECT tr;
+            if (top && GetDCOrgEx(hdc, &org) && GetWindowRect(top, &tr)) {
+                ox = org.x - tr.left; oy = org.y - tr.top;
+            }
+            want = 1;
+        }
+        for (y = 0; y < h; y++) {
+            const DWORD *row = (const DWORD *)bits + (size_t)y * w;
+            for (x = 0; x < w; x++)
+                if ((row[x] & 0xFFFFFF) == 0 &&
+                    ((ox + rc->left + x + oy + rc->top + y) & 1) == want)
+                    SetPixelV(hdc, rc->left + x, rc->top + y, W31_TEXT);
+        }
     }
     SelectObject(mem, of);
     SelectObject(mem, ob);
@@ -287,16 +315,21 @@ void w31_draw_icon(HDC hdc, HBITMAP bmp, int x, int y)
  * the face colour the button sits on); the default button adds a full
  * inner ring, so only its outermost corners are notched. rc shrinks to the
  * area inside the frame. */
+/* TELETEXT PORT: the colour of the rounded-off corners: what lies behind
+ * the button (WinHelp 3.1's bar #808080, a dialog's white); set by
+ * paint_converted_button, the face colour otherwise */
+static COLORREF g_btn_corner = W31_FACE;
+
 static void button_frame(HDC hdc, RECT *rc, BOOL is_default)
 {
     hline(hdc, rc->left + 1, rc->right - 1, rc->top, W31_FRAME);
     hline(hdc, rc->left + 1, rc->right - 1, rc->bottom - 1, W31_FRAME);
     vline(hdc, rc->left, rc->top + 1, rc->bottom - 1, W31_FRAME);
     vline(hdc, rc->right - 1, rc->top + 1, rc->bottom - 1, W31_FRAME);
-    SetPixelV(hdc, rc->left, rc->top, W31_FACE);
-    SetPixelV(hdc, rc->right - 1, rc->top, W31_FACE);
-    SetPixelV(hdc, rc->left, rc->bottom - 1, W31_FACE);
-    SetPixelV(hdc, rc->right - 1, rc->bottom - 1, W31_FACE);
+    SetPixelV(hdc, rc->left, rc->top, g_btn_corner);
+    SetPixelV(hdc, rc->right - 1, rc->top, g_btn_corner);
+    SetPixelV(hdc, rc->left, rc->bottom - 1, g_btn_corner);
+    SetPixelV(hdc, rc->right - 1, rc->bottom - 1, g_btn_corner);
     InflateRect(rc, -1, -1);
     if (is_default) {
         FrameRect(hdc, rc, (HBRUSH)GetStockObject(BLACK_BRUSH));
@@ -396,12 +429,32 @@ void w31_draw_button(HDC hdc, const RECT *rcIn, const w31_button_t *b)
             } else
                 GetTextExtentPoint32A(hdc, seg, n, &sz);
             r.left   = body.left + ((body.right - body.left) - sz.cx) / 2 + shift;
+            if (g_w31_plain) r.left -= 1;   /* TELETEXT PORT: the bold face's overhang; real label ink 1 px left */
             r.right  = r.left + sz.cx;
             r.top    = top + i * line_h;
             r.bottom = r.top + line_h;
             if (b->disabled)
                 w31_draw_text_disabled(hdc, seg, n, &r, DT_SINGLELINE | pfx | DT_LEFT);
-            else
+            else if (g_w31_plain && memchr(seg, '&', (size_t)n)) {
+                /* TELETEXT PORT: Windows 3.1's mnemonic underline runs one
+                 * pixel past the character (the bold face's overhang;
+                 * pixel scan of WinHelp's buttons): text with the prefix
+                 * hidden, then our own underline */
+                const char *amp = memchr(seg, '&', (size_t)n);
+                char pre[256];
+                SIZE a, c;
+                int k = (int)(amp - seg);
+                TEXTMETRICA tmu;
+                DrawTextA(hdc, seg, n, &r, DT_SINGLELINE | DT_HIDEPREFIX | DT_LEFT);
+                if (k < (int)sizeof pre && amp[1] && amp[1] != '&') {
+                    memcpy(pre, seg, (size_t)k);
+                    GetTextExtentPoint32A(hdc, pre, k, &a);
+                    GetTextExtentPoint32A(hdc, amp + 1, 1, &c);
+                    GetTextMetricsA(hdc, &tmu);
+                    hline(hdc, r.left + a.cx, r.left + a.cx + c.cx + 1, r.top + tmu.tmAscent + 1,
+                          GetTextColor(hdc));
+                }
+            } else
                 DrawTextA(hdc, seg, n, &r, DT_SINGLELINE | pfx | DT_LEFT);
             if (!have_focus_rc) { focus_rc = r; have_focus_rc = TRUE; }
             else UnionRect(&focus_rc, &focus_rc, &r);
@@ -496,7 +549,21 @@ static void paint_converted_button(HWND h, HDC hdc)
     b.focused    = (GetFocus() == h);
     b.disabled   = !IsWindowEnabled(h);
     b.is_default = GetPropA(h, PROP_DEFAULT) != NULL;
+    if (g_w31_plain && b.disabled) b.is_default = FALSE;   /* TELETEXT PORT: 3.1 drew no default border on a disabled button */
+    if (g_w31_plain) {
+        /* TELETEXT PORT: the corners show the parent's background */
+        HWND p = GetParent(h);
+        HBRUSH pb = p ? (HBRUSH)GetClassLongPtrA(p, GCLP_HBRBACKGROUND) : NULL;
+        LOGBRUSH lb;
+        char pc[16];
+        g_btn_corner = W31_WINDOW;                          /* a plain 3.1 dialog is white */
+        if (p && GetClassNameA(p, pc, sizeof pc) && lstrcmpA(pc, "#32770") != 0 && pb) {
+            if ((ULONG_PTR)pb <= 31) g_btn_corner = GetSysColor((int)(ULONG_PTR)pb - 1);
+            else if (GetObjectA(pb, sizeof lb, &lb) == sizeof lb && lb.lbStyle == BS_SOLID) g_btn_corner = lb.lbColor;
+        }
+    }
     w31_draw_button(hdc, &rc, &b);
+    g_btn_corner = W31_FACE;
 }
 
 static void paint_edge(HWND h)
@@ -781,11 +848,119 @@ static HFONT g_cap_font = NULL;
 static int   g_cap_pressed = CAP_NONE;
 
 /* The caption rectangle and its three boxes, in WINDOW coordinates. */
+/* TELETEXT PORT (operator request 2026-11-13): the WHOLE non-client area
+ * of a plain-3.1 captioned window is laid out, painted and hit-tested here,
+ * because Windows 11 cannot produce Windows 3.1's geometry (its caption is
+ * 23 px system-wide; WinHelp 3.1's is 18 + its rule). Measured on the real
+ * WINHELP.EXE 3.10 (VM pixel scans), in window coordinates:
+ *   sizable window: frame rows/cols 0..3 (black, gray, gray, black; the
+ *     inner black line is also the caption's outline); caption interior
+ *     rows 4..21, rule row 22; menu bar rows 23..40, rule row 41; client
+ *     from row 42 (row 23 without a menu), 4 px in from the sides and
+ *     bottom. Boxes 18 px + a 1 px black rule.
+ *   dialog: 1 black + 4 band (navy active, #C0C0C0 inactive) on the left,
+ *     right and bottom; top black + 3 band; a 1 px white margin row 4 and
+ *     column 5 (and W-6) round the caption; caption rows 5..22, rule row
+ *     23, client from row 24, 5 px in.
+ * The window's menu bar is taken from Windows (SetMenu(NULL), the HMENU
+ * kept in PROP_MENU) and drawn and tracked here (nc_* below), since a
+ * Windows menu bar would sit under Windows' own caption height. */
+#define PROP_MENU  "NavW31.Menu"
+#define W31_POP_PADB  3    /* Windows' bottom padding in owner-drawn popups */
+#define W31_POP_EXTRA 12   /* calibrated: File drop-down inner width 112 (real) */
+#define PROP_MHOT  "NavW31.MHot"
+typedef struct {
+    int  kind;          /* 1 sizable, 2 dialog */
+    int  o;             /* offset: the frame overhang when maximized */
+    RECT bar;           /* caption incl. its outline lines (cap_rects' bar) */
+    RECT menubar;       /* rows of the menu bar (empty if none), rule below */
+    RECT client;        /* window coordinates */
+} nclay_t;
+
+static HMENU nc_menu(HWND h) { return (HMENU)GetPropA(h, PROP_MENU); }
+static void nc_trace(const char *fmt, ...);   /* W31_TRACE=<file> */
+
+static BOOL nc_custom(HWND h)
+{
+    LONG st;
+    if (!g_w31_plain || !h) return FALSE;
+    st = GetWindowLongA(h, GWL_STYLE);
+    if ((st & WS_CAPTION) != WS_CAPTION || (st & WS_CHILD) || IsIconic(h)) return FALSE;
+    return GetPropA(h, PROP_KIND) && ((UINT)(UINT_PTR)GetPropA(h, PROP_KIND) & KIND_CAPTION);
+}
+
+static void nc_layout(HWND h, int W, int H, nclay_t *L)
+{
+    LONG st = GetWindowLongA(h, GWL_STYLE);
+    int o = 0;
+    ZeroMemory(L, sizeof *L);
+    if (st & WS_THICKFRAME) {
+        if (st & WS_MAXIMIZE) {
+            /* Windows puts a maximized window's frame outside the screen:
+             * keep ours there too, the caption at the screen's top edge */
+            o = GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER) - 4;
+            if (o < 0) o = 0;
+        }
+        L->kind = 1;
+        L->o = o;
+        SetRect(&L->bar, o + 3, o + 3, W - o - 3, o + 23);
+        if (nc_menu(h)) {
+            SetRect(&L->menubar, o + 4, o + 23, W - o - 4, o + 41);
+            SetRect(&L->client, o + 4, o + 42, W - o - 4, H - o - 4);
+        } else {
+            SetRect(&L->menubar, 0, 0, 0, 0);
+            SetRect(&L->client, o + 4, o + 23, W - o - 4, H - o - 4);
+        }
+    } else {
+        L->kind = 2;
+        SetRect(&L->bar, 5, 4, W - 5, 24);
+        SetRect(&L->menubar, 0, 0, 0, 0);
+        SetRect(&L->client, 5, 24, W - 5, H - 5);
+    }
+    if (L->client.bottom < L->client.top) L->client.bottom = L->client.top;
+    if (L->client.right < L->client.left) L->client.right = L->client.left;
+}
+
+static void nc_layout_now(HWND h, nclay_t *L)
+{
+    RECT wr;
+    GetWindowRect(h, &wr);
+    nc_layout(h, wr.right - wr.left, wr.bottom - wr.top, L);
+}
+
 static BOOL cap_rects(HWND h, RECT *bar, RECT *sys, RECT *mn, RECT *mx)
 {
     TITLEBARINFO ti;
     RECT wr;
     int hh;
+    if (nc_custom(h)) {
+        /* TELETEXT PORT: our own layout (see nc_layout) */
+        nclay_t L;
+        LONG st = GetWindowLongA(h, GWL_STYLE);
+        nc_layout_now(h, &L);
+        *bar = L.bar;
+        hh = bar->bottom - bar->top;
+        if (L.kind == 2) {
+            /* dialog: the box is 18 px + rule inside the white margin */
+            if (st & WS_SYSMENU) SetRect(sys, bar->left + 1, bar->top + 1, bar->left + 20, bar->bottom);
+            else                 SetRect(sys, bar->left + 1, bar->top + 1, bar->left + 1, bar->bottom);
+            SetRect(mx, bar->right, bar->top, bar->right, bar->bottom);
+            SetRect(mn, bar->right, bar->top, bar->right, bar->bottom);
+            return TRUE;
+        }
+        if (st & WS_SYSMENU) SetRect(sys, bar->left, bar->top, bar->left + hh, bar->bottom);
+        else                 SetRect(sys, bar->left, bar->top, bar->left, bar->bottom);
+        if (st & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) {
+            /* real pitch: 18 px box + 1 px rule (the max box's right edge
+             * is the frame's inner line) */
+            SetRect(mx, bar->right - hh, bar->top, bar->right - 1, bar->bottom);   /* the frame line is not the box */
+            SetRect(mn, mx->left - (hh - 1), bar->top, mx->left, bar->bottom);
+        } else {
+            SetRect(mx, bar->right, bar->top, bar->right, bar->bottom);
+            SetRect(mn, bar->right, bar->top, bar->right, bar->bottom);
+        }
+        return TRUE;
+    }
     ZeroMemory(&ti, sizeof ti);
     ti.cbSize = sizeof ti;
     if (!GetTitleBarInfo(h, &ti)) return FALSE;
@@ -850,17 +1025,43 @@ static void cap_button(HDC dc, const RECT *r, int kind, BOOL pressed, BOOL zoome
     vline(dc, b.left, b.top, b.bottom, W31_FRAME);       /* black rule on its left */
     b.left += 1;
     FillRect(dc, &b, g_w31_br_face);
-    if (pressed) bevel2(dc, &b, W31_SHADOW, W31_HILITE);
+    if (g_w31_plain) {
+        /* TELETEXT PORT: WinHelp 3.1's caption boxes (pixel scan): inside
+         * the caption's outline rows, a 1 px white highlight top and left
+         * and a 2 px gray shadow bottom and right; pressed, the reverse */
+        RECT in = b;
+        in.top += 1; in.bottom -= 1;
+        if (!pressed) {
+            hline(dc, in.left, in.right - 1, in.top, W31_HILITE);
+            vline(dc, in.left, in.top, in.bottom - 1, W31_HILITE);
+            /* the shadow wins the corners: the outer line runs the full
+             * length, the inner one starts 1 px in */
+            hline(dc, in.left, in.right, in.bottom - 1, W31_SHADOW);
+            vline(dc, in.right - 1, in.top, in.bottom, W31_SHADOW);
+            hline(dc, in.left + 1, in.right, in.bottom - 2, W31_SHADOW);
+            vline(dc, in.right - 2, in.top + 1, in.bottom, W31_SHADOW);
+        } else {
+            hline(dc, in.left, in.right, in.top, W31_SHADOW);
+            hline(dc, in.left, in.right, in.top + 1, W31_SHADOW);
+            vline(dc, in.left, in.top, in.bottom, W31_SHADOW);
+            vline(dc, in.left + 1, in.top, in.bottom, W31_SHADOW);
+        }
+    } else if (pressed) bevel2(dc, &b, W31_SHADOW, W31_HILITE);
     else         bevel2(dc, &b, W31_HILITE, W31_SHADOW);
     cx = (b.left + b.right) / 2 + s;
     cy = (b.top + b.bottom) / 2 + s;
+    if (g_w31_plain) {
+        /* TELETEXT PORT: WinHelp 3.1's triangles (pixel scan): minimize's
+         * apex at row 14, maximize's at row 10, centred 1 px further left */
+        cx = (b.left + b.right - 1) / 2 + s;
+    }
     if (kind == CAP_MIN) {
         cap_triangle(dc, cx, cy, 0, W31_TEXT);
     } else if (zoomed) {                                  /* restore: both */
         cap_triangle(dc, cx, cy - 3, 1, W31_TEXT);
         cap_triangle(dc, cx, cy + 3, 0, W31_TEXT);
     } else {
-        cap_triangle(dc, cx, cy, 1, W31_TEXT);
+        cap_triangle(dc, cx, g_w31_plain ? cy - 1 : cy, 1, W31_TEXT);
     }
 }
 
@@ -913,6 +1114,60 @@ static void cap_frame(HWND h, HDC dc, const RECT *bar, const RECT *sys)
     ZeroMemory(&wi, sizeof wi);
     wi.cbSize = sizeof wi;
     if (!GetWindowInfo(h, &wi)) return;
+    if (nc_custom(h)) {
+        /* TELETEXT PORT: the measured 3.1 frames (see nc_layout) */
+        nclay_t L;
+        HBRUSH band;
+        int off;
+        W = wi.rcWindow.right - wi.rcWindow.left;
+        H = wi.rcWindow.bottom - wi.rcWindow.top;
+        nc_layout(h, W, H, &L);
+        off = L.o;
+        if (L.kind == 2) {
+            band = CreateSolidBrush(g_cap_frame_active ? W31_NAVY : W31_FACE);
+            SetRect(&o, 0, 0, W, H);
+            SetRect(&in, 5, 4, W - 5, H - 5);
+            ring = CreateRectRgnIndirect(&o);
+            hole = CreateRectRgnIndirect(&in);
+            CombineRgn(ring, ring, hole, RGN_DIFF);
+            FillRgn(dc, ring, band);
+            DeleteObject(band); DeleteObject(hole); DeleteObject(ring);
+            FrameRect(dc, &o, (HBRUSH)GetStockObject(BLACK_BRUSH));
+            /* the white margin round the caption: row 4, columns 5 and W-6 */
+            {
+                RECT g;
+                SetRect(&g, 5, 4, W - 5, 5);       FillRect(dc, &g, g_w31_br_window);
+                SetRect(&g, 5, 4, 6, 24);          FillRect(dc, &g, g_w31_br_window);
+                SetRect(&g, W - 6, 4, W - 5, 24);  FillRect(dc, &g, g_w31_br_window);
+            }
+            return;
+        }
+        SetRect(&o, off, off, W - off, H - off);
+        SetRect(&in, off + 4, off + 4, W - off - 4, H - off - 4);
+        ring = CreateRectRgnIndirect(&o);
+        hole = CreateRectRgnIndirect(&in);
+        CombineRgn(ring, ring, hole, RGN_DIFF);
+        FillRgn(dc, ring, g_w31_br_face);
+        DeleteObject(hole); DeleteObject(ring);
+        FrameRect(dc, &o, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        InflateRect(&in, 1, 1);
+        FrameRect(dc, &in, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        if (!(GetWindowLongA(h, GWL_STYLE) & WS_MAXIMIZE)) {
+            /* the corner ticks, in line with the system box's rule and the
+             * caption's bottom rule (as before) */
+            int tx = sys->right - 1, ty = bar->bottom - 1;
+            if (sys->right <= sys->left) tx = bar->left + (bar->bottom - bar->top) - 1;
+            vline(dc, tx,         off,         off + 4, W31_FRAME);
+            vline(dc, W - 1 - tx, off,         off + 4, W31_FRAME);
+            vline(dc, tx,         H - off - 4, H - off, W31_FRAME);
+            vline(dc, W - 1 - tx, H - off - 4, H - off, W31_FRAME);
+            hline(dc, off,         off + 4, ty,         W31_FRAME);
+            hline(dc, off,         off + 4, H - 1 - ty, W31_FRAME);
+            hline(dc, W - off - 4, W - off, ty,         W31_FRAME);
+            hline(dc, W - off - 4, W - off, H - 1 - ty, W31_FRAME);
+        }
+        return;
+    }
     cap_borders(h, &wi, &bx, &by);   /* TELETEXT PORT: slim frame */
     if (bx < 3 || by < 3) return;
     W = wi.rcWindow.right - wi.rcWindow.left;
@@ -945,21 +1200,6 @@ static void cap_frame(HWND h, HDC dc, const RECT *bar, const RECT *sys)
     FrameRect(dc, &o, (HBRUSH)GetStockObject(BLACK_BRUSH));
     InflateRect(&in, 1, 1);
     FrameRect(dc, &in, (HBRUSH)GetStockObject(BLACK_BRUSH));
-    if (cap_slim(h) && GetMenu(h)) {
-        /* TELETEXT PORT (slim frame): Windows' menu bar starts 4 px inside
-         * the frame now; the gap at each end is menu-bar white */
-        MENUBARINFO mbi;
-        ZeroMemory(&mbi, sizeof mbi);
-        mbi.cbSize = sizeof mbi;
-        if (GetMenuBarInfo(h, OBJID_MENU, 0, &mbi)) {
-            RECT mb = mbi.rcBar, g;
-            OffsetRect(&mb, -wi.rcWindow.left, -wi.rcWindow.top);
-            SetRect(&g, bx, mb.top, mb.left, mb.bottom);
-            FillRect(dc, &g, g_w31_br_window);
-            SetRect(&g, mb.right, mb.top, W - bx, mb.bottom);
-            FillRect(dc, &g, g_w31_br_window);
-        }
-    }
     if (GetWindowLongA(h, GWL_STYLE) & WS_THICKFRAME) {
         int tx = sys->right - 1;                 /* from the left and right ends */
         int ty = bar->bottom - 1;                /* from the top and bottom ends */
@@ -974,6 +1214,8 @@ static void cap_frame(HWND h, HDC dc, const RECT *bar, const RECT *sys)
         hline(dc, W - bx, W,  H - 1 - ty, W31_FRAME);
     }
 }
+
+static void nc_paint_menubar(HWND h, HDC dc);   /* TELETEXT PORT */
 
 static void cap_paint(HWND h, int active)
 {
@@ -1006,6 +1248,13 @@ static void cap_paint(HWND h, int active)
     {
         int bw = (sys.right - sys.left) - 9, bx = sys.left + 4;
         int by = (sys.top + sys.bottom) / 2 - 1;
+        if (g_w31_plain) {
+            /* TELETEXT PORT: WinHelp 3.1's bar is 13 x 3, ending 4 px
+             * before the box's right rule (pixel scans: main window box
+             * 20 wide, dialog box 19 wide, same glyph) */
+            bw = 13; bx = sys.right - 17;
+            by = (sys.top + sys.bottom) / 2 - 2;
+        }
         RECT g;
         SetRect(&g, bx + 1, by + 1, bx + bw + 1, by + 4);        /* shadow */
         FillRect(dc, &g, (HBRUSH)GetStockObject(GRAY_BRUSH));
@@ -1039,8 +1288,25 @@ static void cap_paint(HWND h, int active)
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, active ? W31_HILITE : W31_TEXT);
     SetRect(&t, sys.right + 4, bar.top, mn.left - 4, bar.bottom - 1);
+    if (g_w31_plain) OffsetRect(&t, 0, 1);   /* TELETEXT PORT: real title ink from row 8 */
+    if (g_w31_plain && mn.left >= bar.right)
+        t.right -= 1;   /* TELETEXT PORT: no boxes: centred up to the right outline,
+                         * as up to the min box's (real Search title 187..229) */
     DrawTextA(dc, title, -1, &t, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
     SelectObject(dc, of);
+    if (nc_custom(h)) {
+        /* TELETEXT PORT: a dialog's caption sits in a 1 px white margin
+         * (the outline lines above are white there, not black); a sizable
+         * window's menu bar is ours */
+        nclay_t L;
+        nc_layout_now(h, &L);
+        if (L.kind == 2) {
+            hline(dc, bar.left, bar.right, bar.top, W31_WINDOW);
+            vline(dc, bar.left, bar.top, bar.bottom, W31_WINDOW);   /* TELETEXT PORT: through the rule row (real Search, x 5 row 23) */
+            vline(dc, bar.right - 1, bar.top, bar.bottom - 1, W31_WINDOW);
+        }
+        if (nc_menu(h)) nc_paint_menubar(h, dc);
+    }
     ReleaseDC(h, dc);
 }
 
@@ -1073,7 +1339,10 @@ static HFONT cap_font(void)
     if (!g_cap_font) {
         LOGFONTA lf;
         ZeroMemory(&lf, sizeof lf);
-        lf.lfWeight  = FW_BOLD;
+        /* TELETEXT PORT: the System bitmap face is bold by design; asking
+         * for FW_BOLD on top made GDI embolden it again (+1 px a glyph:
+         * "File" 25 px where WinHelp 3.1's is 22) */
+        lf.lfWeight  = g_w31_plain ? FW_NORMAL : FW_BOLD;
         lf.lfCharSet = ANSI_CHARSET;
         lf.lfQuality = NONANTIALIASED_QUALITY;
         lstrcpyA(lf.lfFaceName, "System");
@@ -1190,7 +1459,8 @@ static void cap_menubar_measure(HWND h, MEASUREITEMSTRUCT *mi)
     GetTextMetricsA(dc, &tm);
     if (e->kind == MD_SEP) {
         mi->itemWidth  = 8;
-        mi->itemHeight = 6;                     /* an etched rule with room round it */
+        mi->itemHeight = g_w31_plain ? 7 : 6;   /* an etched rule with room round it;
+                                                   TELETEXT PORT: WinHelp 3.1's is 7 px */
     } else if (e->kind == MD_BAR) {
         RECT r = { 0, 0, 0, 0 };
         DrawTextA(dc, e->text, -1, &r, DT_CALCRECT | DT_SINGLELINE);
@@ -1207,6 +1477,9 @@ static void cap_menubar_measure(HWND h, MEASUREITEMSTRUCT *mi)
         /* a check-mark column on the left, as Windows 3.1, then the label,
          * then the shortcut after a gap */
         mi->itemWidth  = (UINT)(16 + (r1.right - r1.left) + (key[0] ? 24 + (r2.right - r2.left) : 0) + 16);
+        if (g_w31_plain)   /* TELETEXT PORT: real inner width = ink + 16 + 15; Windows
+                            * adds its own margin round an owner-drawn item */
+            mi->itemWidth = (UINT)((r1.right - r1.left) + (key[0] ? 24 + (r2.right - r2.left) : 0) + W31_POP_EXTRA);
         mi->itemHeight = (UINT)tm.tmHeight + 2;
     }
     SelectObject(dc, of);
@@ -1246,14 +1519,34 @@ static void cap_menubar_draw(const DRAWITEMSTRUCT *di)
     if (e->kind == MD_SEP) {
         int y = (r.top + r.bottom) / 2 - 1;
         FillRect(di->hDC, &r, g_w31_br_window);
+        if (g_w31_plain) {
+            /* TELETEXT PORT: WinHelp 3.1: one black line, middle row,
+             * the full width between the borders (pixel scan) */
+            int right = r.right;
+            HWND mw = WindowFromDC(di->hDC);
+            RECT mc;
+            /* Windows gives a separator a narrower rectangle than an
+             * item: the line runs to the popup's inner edge */
+            if (mw && GetClientRect(mw, &mc) && mc.right > right) right = mc.right;
+            hline(di->hDC, r.left, right, r.top + 3, W31_FRAME);
+        } else {
         hline(di->hDC, r.left + 1, r.right - 1, y, W31_SHADOW);   /* etched: */
         hline(di->hDC, r.left + 1, r.right - 1, y + 1, W31_HILITE); /* gray over white */
+        }
         md_frame_after_item(di->hDC);
         return;
     }
     /* Windows 3.1 highlighted a grayed item too; its gray label stays
      * readable on navy as the shadow colour. */
     br = CreateSolidBrush(sel ? W31_NAVY : W31_WINDOW);
+    if (g_w31_plain && e->kind == MD_POP) {
+        /* TELETEXT PORT: the selection runs to the popup's inner edge
+         * (WinHelp 3.1); Windows' item rectangle stops 3 px short */
+        HWND mw = WindowFromDC(di->hDC);
+        RECT mc, f = r;
+        if (mw && GetClientRect(mw, &mc) && mc.right > f.right) f.right = mc.right;
+        FillRect(di->hDC, &f, br);
+    } else
     FillRect(di->hDC, &r, br);
     DeleteObject(br);
     if ((di->itemState & ODS_NOACCEL) && !g_w31_plain) fmt |= DT_HIDEPREFIX;   /* TELETEXT PORT: 3.1 always underlined */
@@ -1261,6 +1554,7 @@ static void cap_menubar_draw(const DRAWITEMSTRUCT *di)
     SetBkMode(di->hDC, TRANSPARENT);
     if (e->kind == MD_BAR) {
         fmt |= DT_CENTER;
+        if (g_w31_plain) OffsetRect(&r, 0, -1);   /* TELETEXT PORT: real bar text ink from row 26 */
         if (dis && !sel) w31_draw_text_disabled(di->hDC, e->text, -1, &r, fmt);
         else {
             SetTextColor(di->hDC, sel ? W31_HILITE : W31_TEXT);
@@ -1272,6 +1566,7 @@ static void cap_menubar_draw(const DRAWITEMSTRUCT *di)
         md_split(e->text, label, sizeof label, key, sizeof key);
         lr.left += 16;
         kr.right -= 16;
+        if (g_w31_plain) { OffsetRect(&lr, -1, -1); OffsetRect(&kr, 0, -1); }   /* TELETEXT PORT: real ink at item top + 3, 16 px in */
         if (di->itemState & ODS_CHECKED) {          /* a 7x7 check in the left column */
             int cx = r.left + 4, cy = (r.top + r.bottom) / 2;
             COLORREF c = sel ? W31_HILITE : W31_TEXT;
@@ -1389,6 +1684,33 @@ static void menuwnd_ncpaint(HWND h)
     }
     FillRgn(dc, clip, g_w31_br_window);
     DeleteObject(clip);
+    if (g_w31_plain) {
+        /* TELETEXT PORT: WinHelp 3.1's drop-down: the black frame, and a
+         * 1 px silver shadow right and bottom, offset 1 (pixel scan; the
+         * two outer corners are cut off by the window region) */
+        /* Windows pads an owner-drawn popup's client by 3 px at the
+         * bottom, which WinHelp 3.1's has not: the frame is drawn above
+         * that padding and the padding is cut off by the region */
+        RECT f = wr;
+        int bot = wr.bottom - W31_POP_PADB;
+        f.right -= 1; f.bottom = bot - 1;
+        FrameRect(dc, &f, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        vline(dc, wr.right - 1, wr.top + 1, bot, W31_FACE);
+        hline(dc, wr.left + 1, wr.right, bot - 1, W31_FACE);
+        {
+            HRGN rg = CreateRectRgn(0, 0, wr.right, bot), c1, c2;
+            c1 = CreateRectRgn(wr.right - 1, 0, wr.right, 1);
+            c2 = CreateRectRgn(0, bot - 1, 1, bot);
+            CombineRgn(rg, rg, c1, RGN_DIFF);
+            CombineRgn(rg, rg, c2, RGN_DIFF);
+            DeleteObject(c1); DeleteObject(c2);
+            if (!GetPropA(h, "NavW31.Rgn") ||
+                (INT_PTR)GetPropA(h, "NavW31.Rgn") != (INT_PTR)MAKELONG(wr.right, wr.bottom)) {
+                SetPropA(h, "NavW31.Rgn", (HANDLE)(INT_PTR)MAKELONG(wr.right, wr.bottom));
+                SetWindowRgn(h, rg, FALSE);
+            } else DeleteObject(rg);
+        }
+    } else
     FrameRect(dc, &wr, (HBRUSH)GetStockObject(BLACK_BRUSH));
     ReleaseDC(h, dc);
 }
@@ -1530,8 +1852,372 @@ static void cap_track(HWND h, int which)
 }
 
 /* The caption's messages; returns TRUE if handled (*res set). */
+/* ------------------------------------------------------------------ */
+/* TELETEXT PORT: the menu bar, drawn and tracked by w31 (see nc_layout) */
+/* ------------------------------------------------------------------ */
+#define NC_MAXBAR 16
+/* item rectangles in window coordinates: ink + 9 px either side, from
+ * the frame's inner edge (real: File 4..43, Edit text at +53, ...) */
+static int nc_menu_items(HWND h, RECT *r, int max)
+{
+    HMENU m = nc_menu(h);
+    nclay_t L;
+    HDC dc;
+    HGDIOBJ of;
+    int i, n, x;
+    if (!m) return 0;
+    nc_layout_now(h, &L);
+    n = GetMenuItemCount(m);
+    if (n > max) n = max;
+    dc = GetDC(h);
+    of = SelectObject(dc, cap_font());
+    x = L.menubar.left;
+    for (i = 0; i < n; i++) {
+        MENUITEMINFOA mi;
+        const cap_mitem_t *e;
+        RECT t = { 0, 0, 0, 0 };
+        char buf[128];
+        ZeroMemory(&mi, sizeof mi);
+        mi.cbSize = sizeof mi;
+        mi.fMask = MIIM_DATA | MIIM_STRING | MIIM_FTYPE;
+        mi.dwTypeData = buf; mi.cch = sizeof buf; buf[0] = 0;
+        GetMenuItemInfoA(m, (UINT)i, TRUE, &mi);
+        e = md_of(mi.dwItemData);
+        DrawTextA(dc, e && e->text ? e->text : buf, -1, &t, DT_CALCRECT | DT_SINGLELINE);
+        /* the real item is the INK + 9 px either side; DT_CALCRECT's width
+         * is the ink + 2 (the bold face's overhang), hence 8 + 8 */
+        SetRect(&r[i], x, L.menubar.top, x + 8 + (t.right - t.left) + 8, L.menubar.bottom);
+        x = r[i].right;
+    }
+    SelectObject(dc, of);
+    ReleaseDC(h, dc);
+    return n;
+}
+
+static void nc_paint_menubar(HWND h, HDC dc)
+{
+    HMENU m = nc_menu(h);
+    RECT r[NC_MAXBAR];
+    nclay_t L;
+    int i, n, hot = (int)(INT_PTR)GetPropA(h, PROP_MHOT) - 1;
+    if (!m) return;
+    nc_layout_now(h, &L);
+    FillRect(dc, &L.menubar, g_w31_br_window);
+    hline(dc, L.bar.left, L.bar.right, L.menubar.bottom, W31_FRAME);   /* rule under it */
+    n = nc_menu_items(h, r, NC_MAXBAR);
+    for (i = 0; i < n; i++) {
+        DRAWITEMSTRUCT di;
+        MENUITEMINFOA mi;
+        UINT st = GetMenuState(m, (UINT)i, MF_BYPOSITION);
+        ZeroMemory(&mi, sizeof mi);
+        mi.cbSize = sizeof mi;
+        mi.fMask = MIIM_DATA | MIIM_ID;
+        GetMenuItemInfoA(m, (UINT)i, TRUE, &mi);
+        if (!md_of(mi.dwItemData)) continue;
+        ZeroMemory(&di, sizeof di);
+        di.CtlType = ODT_MENU;
+        di.itemID = mi.wID;
+        di.itemAction = ODA_DRAWENTIRE;
+        di.itemState = (i == hot ? ODS_SELECTED : 0) |
+                       ((st & (MF_GRAYED | MF_DISABLED)) ? ODS_GRAYED : 0);
+        di.hwndItem = (HWND)m;
+        di.hDC = dc;
+        di.rcItem = r[i];
+        di.itemData = mi.dwItemData;
+        cap_menubar_draw(&di);
+    }
+}
+
+static void nc_repaint_menubar(HWND h)
+{
+    HDC dc = GetWindowDC(h);
+    if (dc) { nc_paint_menubar(h, dc); ReleaseDC(h, dc); }
+}
+
+static int nc_item_at(HWND h, POINT scr)
+{
+    RECT wr, r[NC_MAXBAR];
+    int i, n;
+    POINT p;
+    GetWindowRect(h, &wr);
+    p.x = scr.x - wr.left; p.y = scr.y - wr.top;
+    n = nc_menu_items(h, r, NC_MAXBAR);
+    for (i = 0; i < n; i++) if (PtInRect(&r[i], p)) return i;
+    return -1;
+}
+
+/* the bar item's mnemonic, lower case (owner-drawn items have no string
+ * for GetMenuString; the text is kept in g_md) */
+static int nc_mnemonic(HMENU m, int i)
+{
+    MENUITEMINFOA mi;
+    const cap_mitem_t *e;
+    const char *amp;
+    ZeroMemory(&mi, sizeof mi);
+    mi.cbSize = sizeof mi;
+    mi.fMask = MIIM_DATA;
+    if (!GetMenuItemInfoA(m, (UINT)i, TRUE, &mi)) return 0;
+    e = md_of(mi.dwItemData);
+    if (!e || !e->text || !(amp = strchr(e->text, '&')) || !amp[1]) return 0;
+    return (int)(BYTE)(ULONG_PTR)CharLowerA((LPSTR)(ULONG_PTR)(BYTE)amp[1]);
+}
+static int nc_lower(int c) { return (int)(BYTE)(ULONG_PTR)CharLowerA((LPSTR)(ULONG_PTR)(BYTE)c); }
+
+/* the drop-down loop: one TrackPopupMenu per bar item; Left/Right and a
+ * mouse sliding onto another bar item end it and open the neighbour */
+static struct {
+    HWND  h;
+    HHOOK hook;
+    int   cur, next;
+    BOOL  next_kbd;      /* the switch came from Left/Right */
+    HMENU top;           /* the open drop-down */
+    HMENU sel_menu;      /* menu of the selected item (WM_MENUSELECT) */
+    BOOL  sel_popup;     /* the selected item opens a submenu */
+    POINT last;          /* the pointer when the loop started / last moved */
+} g_nc;
+
+static LRESULT CALLBACK nc_filter(int code, WPARAM w, LPARAM l)
+{
+    MSG *msg = (MSG *)l;
+    if (code == MSGF_MENU && msg && g_nc.h) {
+        int n = GetMenuItemCount(nc_menu(g_nc.h));
+        if (msg->message == WM_KEYDOWN && n > 0) {
+            if (msg->wParam == VK_LEFT && g_nc.sel_menu == g_nc.top) {
+                g_nc.next = (g_nc.cur + n - 1) % n;
+                g_nc.next_kbd = TRUE;
+                EndMenu();
+            } else if (msg->wParam == VK_RIGHT && !g_nc.sel_popup) {
+                g_nc.next = (g_nc.cur + 1) % n;
+                g_nc.next_kbd = TRUE;
+                EndMenu();
+            }
+        } else if ((msg->message == WM_MOUSEMOVE &&
+                    (msg->pt.x != g_nc.last.x || msg->pt.y != g_nc.last.y)) ||
+                   msg->message == WM_LBUTTONDOWN) {
+            /* only a REAL move slides to another menu: Windows sends a
+             * mouse move when a menu opens, and a pointer resting over a
+             * bar item must not steal a menu opened from the keyboard */
+            int i = nc_item_at(g_nc.h, msg->pt);
+            nc_trace("filter msg %04x at %ld,%ld item %d (cur %d) last %ld,%ld\n", msg->message, msg->pt.x, msg->pt.y, i, g_nc.cur, g_nc.last.x, g_nc.last.y);
+            g_nc.last = msg->pt;
+            if (i >= 0 && i != g_nc.cur) { g_nc.next = i; g_nc.next_kbd = FALSE; EndMenu(); }
+            else if (i >= 0 && msg->message == WM_LBUTTONDOWN) { g_nc.next = -1; EndMenu(); return 1; }
+        }
+    }
+    return CallNextHookEx(g_nc.hook, code, w, l);
+}
+
+static void nc_track(HWND h, int item, BOOL keyboard)
+{
+    HMENU m = nc_menu(h);
+    RECT wr, r[NC_MAXBAR];
+    int n = nc_menu_items(h, r, NC_MAXBAR);
+    nclay_t L;
+    if (!m || item < 0 || item >= n) return;
+    nc_layout_now(h, &L);
+    g_nc.h = h;
+    GetCursorPos(&g_nc.last);
+    g_nc.hook = SetWindowsHookExA(WH_MSGFILTER, nc_filter, NULL, GetCurrentThreadId());
+    while (item >= 0) {
+        HMENU sub = GetSubMenu(m, item);
+        nc_trace("track item %d kbd %d\n", item, keyboard);
+        g_nc.cur = item;
+        g_nc.next = -1;
+        g_nc.next_kbd = FALSE;
+        g_nc.top = sub;
+        g_nc.sel_menu = sub;
+        g_nc.sel_popup = FALSE;
+        SetPropA(h, PROP_MHOT, (HANDLE)(INT_PTR)(item + 1));
+        nc_repaint_menubar(h);
+        if (sub) {
+            GetWindowRect(h, &wr);
+            /* the first item highlighted when opened from the keyboard */
+            if (keyboard) PostMessageA(h, WM_KEYDOWN, VK_DOWN, 0);
+            /* the drop-down's top border on the bar's rule, its left
+             * border at the item's left edge (real File / Help) */
+            TrackPopupMenuEx(sub, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_NOANIMATION,   /* 3.1 menus never animated */
+                             wr.left + r[item].left, wr.top + L.menubar.bottom, h, NULL);
+        }
+        item = g_nc.next;
+        keyboard = g_nc.next_kbd;   /* a Left/Right switch opens with the first item selected */
+    }
+    if (g_nc.hook) UnhookWindowsHookEx(g_nc.hook);
+    g_nc.hook = NULL;
+    g_nc.h = NULL;
+    RemovePropA(h, PROP_MHOT);
+    nc_repaint_menubar(h);
+}
+
+/* Alt or F10 alone: the first bar item highlighted, Left/Right move it,
+ * Down/Enter or its letter open a drop-down, Esc/Alt/a click leave */
+static void nc_keyboard(HWND h)
+{
+    HMENU m = nc_menu(h);
+    int n = m ? GetMenuItemCount(m) : 0, hot = 0;
+    MSG msg;
+    BOOL done = FALSE;
+    if (n <= 0) return;
+    SetPropA(h, PROP_MHOT, (HANDLE)(INT_PTR)1);
+    nc_repaint_menubar(h);
+    SetCapture(h);
+    while (!done && GetMessageA(&msg, NULL, 0, 0)) {
+        switch (msg.message) {
+        case WM_KEYDOWN: case WM_SYSKEYDOWN:
+            if (msg.wParam == VK_LEFT)  { hot = (hot + n - 1) % n; }
+            else if (msg.wParam == VK_RIGHT) { hot = (hot + 1) % n; }
+            else if (msg.wParam == VK_DOWN || msg.wParam == VK_RETURN || msg.wParam == VK_UP) {
+                ReleaseCapture(); nc_track(h, hot, TRUE); return;
+            } else if (msg.wParam == VK_ESCAPE || msg.wParam == VK_MENU || msg.wParam == VK_F10) {
+                done = TRUE;
+            }
+            SetPropA(h, PROP_MHOT, (HANDLE)(INT_PTR)(hot + 1));
+            nc_repaint_menubar(h);
+            continue;
+        case WM_CHAR: case WM_SYSCHAR: {
+            int i;
+            for (i = 0; i < n; i++) {
+                if (nc_mnemonic(m, i) && nc_mnemonic(m, i) == nc_lower((int)msg.wParam)) {
+                    ReleaseCapture(); RemovePropA(h, PROP_MHOT); nc_track(h, i, TRUE); return;
+                }
+            }
+            MessageBeep(0);
+            continue;
+        }
+        case WM_KEYUP: case WM_SYSKEYUP:
+            continue;
+        case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_NCLBUTTONDOWN:
+            done = TRUE;
+            break;
+        }
+        if (done) break;
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+    ReleaseCapture();
+    RemovePropA(h, PROP_MHOT);
+    nc_repaint_menubar(h);
+}
+
+/* the non-client messages of a custom-layout window; TRUE = handled */
+static void nc_trace(const char *fmt, ...)
+{
+    static int on = -1;
+    char buf[256];
+    va_list ap;
+    if (on < 0) on = getenv("W31_TRACE") != NULL;
+    if (!on) return;
+    va_start(ap, fmt); vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
+    OutputDebugStringA(buf);
+    { FILE *f = fopen(getenv("W31_TRACE"), "a"); if (f) { fputs(buf, f); fclose(f); } }
+}
+
+static BOOL nc_proc(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res)
+{
+    if (m == WM_SYSCOMMAND) nc_trace("SYSCOMMAND %04x l=%ld\n", (unsigned)(w & 0xFFF0), (long)l);
+    switch (m) {
+    case WM_NCCALCSIZE: {
+        RECT *rc = w ? &((NCCALCSIZE_PARAMS *)l)->rgrc[0] : (RECT *)l;
+        nclay_t L;
+        RECT wr = *rc;
+        nc_layout(h, wr.right - wr.left, wr.bottom - wr.top, &L);
+        rc->left   = wr.left + L.client.left;
+        rc->top    = wr.top + L.client.top;
+        rc->right  = wr.left + L.client.right;
+        rc->bottom = wr.top + L.client.bottom;
+        *res = 0;
+        return TRUE;
+    }
+    case WM_NCHITTEST: {
+        RECT wr, bar, sys, mn, mx;
+        POINT p;
+        nclay_t L;
+        int W, H, c = 23;
+        LONG st = GetWindowLongA(h, GWL_STYLE);
+        GetWindowRect(h, &wr);
+        W = wr.right - wr.left; H = wr.bottom - wr.top;
+        p.x = (short)LOWORD(l) - wr.left; p.y = (short)HIWORD(l) - wr.top;
+        nc_layout(h, W, H, &L);
+        cap_rects(h, &bar, &sys, &mn, &mx);
+        if (PtInRect(&L.client, p)) { *res = HTCLIENT; return TRUE; }
+        if (PtInRect(&bar, p) && p.x >= bar.left + 1 && p.y >= bar.top + 1 &&
+            p.x < bar.right - 1) {
+            if (PtInRect(&sys, p))      *res = HTSYSMENU;
+            else if (PtInRect(&mn, p))  *res = HTMINBUTTON;
+            else if (PtInRect(&mx, p))  *res = HTMAXBUTTON;
+            else                        *res = HTCAPTION;
+            return TRUE;
+        }
+        if (PtInRect(&L.menubar, p)) { *res = HTMENU; return TRUE; }
+        if (L.kind == 1 && !(st & WS_MAXIMIZE)) {
+            BOOL l4 = p.x < 4, r4 = p.x >= W - 4, t4 = p.y < 4, b4 = p.y >= H - 4;
+            if (l4 || r4 || t4 || b4) {
+                BOOL top = p.y < c, bot = p.y >= H - c, left = p.x < c, right = p.x >= W - c;
+                if ((l4 && top) || (t4 && left))       *res = HTTOPLEFT;
+                else if ((r4 && top) || (t4 && right)) *res = HTTOPRIGHT;
+                else if ((l4 && bot) || (b4 && left))  *res = HTBOTTOMLEFT;
+                else if ((r4 && bot) || (b4 && right)) *res = HTBOTTOMRIGHT;
+                else if (l4) *res = HTLEFT;
+                else if (r4) *res = HTRIGHT;
+                else if (t4) *res = HTTOP;
+                else         *res = HTBOTTOM;
+                return TRUE;
+            }
+        }
+        if (PtInRect(&bar, p)) { *res = HTCAPTION; return TRUE; }   /* its outline */
+        *res = (p.x >= 0 && p.y >= 0 && p.x < W && p.y < H) ? HTBORDER : HTNOWHERE;
+        return TRUE;
+    }
+    case WM_NCPAINT:
+        cap_paint(h, -1);
+        *res = 0;
+        return TRUE;
+    case WM_NCLBUTTONDOWN:
+        if (w == HTMENU) {
+            POINT p = { (short)LOWORD(l), (short)HIWORD(l) };
+            nc_track(h, nc_item_at(h, p), FALSE);
+            *res = 0;
+            return TRUE;
+        }
+        return FALSE;
+    case WM_MENUSELECT:
+        if (g_nc.h == h) {
+            g_nc.sel_menu = (HMENU)l;
+            g_nc.sel_popup = (HIWORD(w) & MF_POPUP) != 0;
+        }
+        return FALSE;
+    case WM_SYSCOMMAND:
+        if ((w & 0xFFF0) == SC_KEYMENU && nc_menu(h)) {
+            HMENU mm = nc_menu(h);
+            int i, n = GetMenuItemCount(mm);
+            if (l == 0) { nc_keyboard(h); *res = 0; return TRUE; }
+            if (l == ' ') return FALSE;                     /* the system menu */
+            for (i = 0; i < n; i++) {
+                if (nc_mnemonic(mm, i) && nc_mnemonic(mm, i) == nc_lower((int)l)) {
+                    nc_track(h, i, TRUE);
+                    *res = 0;
+                    return TRUE;
+                }
+            }
+        }
+        return FALSE;                                       /* the app (button mnemonics) */
+    }
+    return FALSE;
+}
+
+/* the window's menu, wherever it is kept now */
+HMENU w31_get_menu(HWND h)
+{
+    HMENU m = nc_menu(h);
+    return m ? m : GetMenu(h);
+}
+
 static BOOL cap_proc(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res)
 {
+    if (nc_custom(h)) {
+        if (nc_proc(h, m, w, l, res)) return TRUE;
+        if (m == WM_SYSCOMMAND && (w & 0xFFF0) == SC_KEYMENU && l != ' ')
+            return FALSE;   /* the app's button mnemonics, then Windows */
+    }
     RECT bar, sys, mn, mx;
     switch (m) {
     case WM_NCPAINT: {
@@ -1693,6 +2379,11 @@ void w31_caption_attach(HWND h)
     cap_prepare(h);
     subclass(h, KIND_CAPTION);
     cap_menubar_ownerdraw(h);
+    if (g_w31_plain && GetMenu(h)) {
+        /* TELETEXT PORT: the menu bar is drawn and tracked by w31 (nc_*) */
+        SetPropA(h, PROP_MENU, (HANDLE)GetMenu(h));
+        SetMenu(h, NULL);
+    }
     /* TELETEXT PORT: Windows 3.1 always underlined mnemonics and drew focus
      * frames; Windows 2000+ hides them until Alt is pressed. */
     if (g_w31_plain)
@@ -2265,6 +2956,13 @@ static void sbov_sync(HWND ctl)
             continue;
         }
         at = scr;
+        if (g_w31_plain && (style & WS_BORDER)) {
+            /* TELETEXT PORT: a 3.1 scroll bar lies over its control's
+             * border, its outline IS the border (pixel scan of the Search
+             * dialog's keyword list: bar 370..386 x 92..172, border 386) */
+            if (bar == SB_VERT) { at.left++; at.right++; at.top--; at.bottom++; }
+            else                { at.top++; at.bottom++; at.left--; at.right++; }
+        }
         if (!o->popup) MapWindowPoints(NULL, GetParent(ctl), (POINT *)&at, 2);
         if (!o->ov[bar]) {
             sbov_register();
@@ -2642,6 +3340,7 @@ static LRESULT W31ProcInner(HWND h, UINT m, WPARAM w, LPARAM l)
             LRESULT r = call_old(h, m, w, l);
             RECT *rc = w ? &((NCCALCSIZE_PARAMS *)l)->rgrc[0] : (RECT *)l;
             InflateRect(rc, -1, -1);
+            if (g_w31_plain) { rc->right -= 1; rc->bottom -= 1; }   /* TELETEXT PORT: 1 px shadow */
             if (!GetPropA(h, PROP_MENUOURS)) menuwnd_style(h);
             return r;
         }
@@ -2649,37 +3348,6 @@ static LRESULT W31ProcInner(HWND h, UINT m, WPARAM w, LPARAM l)
             menuwnd_ncpaint(h);
             return 0;
         }
-    }
-
-    /* TELETEXT PORT (plain 3.1 frames): a dialog's band continues 2 px into
-     * the client, so repaint those strips when the activation changes. */
-    if (g_w31_plain && (kind & KIND_CAPTION)) {
-        if (m == WM_NCACTIVATE && (kind & KIND_DIALOG) &&
-            !(GetWindowLongA(h, GWL_STYLE) & WS_THICKFRAME)) {
-            RECT rc, s;
-            GetClientRect(h, &rc);
-            SetRect(&s, 0, 0, rc.right, 2);                   InvalidateRect(h, &s, TRUE);
-            SetRect(&s, 0, rc.bottom - 2, rc.right, rc.bottom); InvalidateRect(h, &s, TRUE);
-            SetRect(&s, 0, 0, 2, rc.bottom);                  InvalidateRect(h, &s, TRUE);
-            SetRect(&s, rc.right - 2, 0, rc.right, rc.bottom); InvalidateRect(h, &s, TRUE);
-        }
-        /* (A window region that clipped the outer 4 px of a sizable frame
-         * was tried and backed out: with a region set, Windows 11 stops
-         * laying out the non-client area. See the phase 2a report.) */
-    }
-
-    if ((kind & KIND_CAPTION) && m == WM_NCCALCSIZE && cap_slim(h)) {
-        /* TELETEXT PORT: see cap_slim. Windows lays out its 8 px frame,
-         * caption and menu bar as usual (so its menu bar, hit tests and
-         * drop-downs stay where it thinks they are); the client then takes
-         * 4 of the 8 px on the left, right and bottom. At the top the
-         * caption is painted 4 px taller instead (cap_rects). */
-        RECT *rc = w ? &((NCCALCSIZE_PARAMS *)l)->rgrc[0] : (RECT *)l;
-        LRESULT r = call_old(h, m, w, l);
-        rc->left   -= W31_SLIM_OUT;
-        rc->right  += W31_SLIM_OUT;
-        rc->bottom += W31_SLIM_OUT;
-        return r;
     }
 
     if (kind & KIND_CAPTION) {
@@ -2695,6 +3363,10 @@ static LRESULT W31ProcInner(HWND h, UINT m, WPARAM w, LPARAM l)
 
     if (m == WM_NCDESTROY) {
         WNDPROC old = (WNDPROC)GetPropA(h, PROP_OLDPROC);
+        if (GetPropA(h, PROP_MENU)) {               /* TELETEXT PORT: ours now */
+            DestroyMenu((HMENU)GetPropA(h, PROP_MENU));
+            RemovePropA(h, PROP_MENU);
+        }
         if (kind & KIND_SCROLL) sb_detach(h);
         SetWindowLongPtrA(h, GWLP_WNDPROC, (LONG_PTR)old);
         RemovePropA(h, PROP_OLDPROC);
@@ -2704,6 +3376,7 @@ static LRESULT W31ProcInner(HWND h, UINT m, WPARAM w, LPARAM l)
         RemovePropA(h, PROP_TXH);
         RemovePropA(h, PROP_ACT);
         RemovePropA(h, "NavW31.MenuOurs");
+        RemovePropA(h, "NavW31.Rgn");
         return old ? CallWindowProcA(old, h, m, w, l) : 0;
     }
 
@@ -2895,18 +3568,6 @@ static LRESULT W31ProcInner(HWND h, UINT m, WPARAM w, LPARAM l)
             RECT rc;
             GetClientRect(h, &rc);
             FillRect((HDC)w, &rc, g_w31_plain ? g_w31_br_window : g_w31_br_face);  /* TELETEXT PORT */
-            if (g_w31_plain && (kind & KIND_CAPTION) &&
-                !(GetWindowLongA(h, GWL_STYLE) & WS_THICKFRAME)) {
-                /* TELETEXT PORT: the last 2 px of the real 4 px dialog band
-                 * (Windows' dialog border is 3 px: black + 2 band) */
-                INT_PTR a = (INT_PTR)GetPropA(h, PROP_ACT);
-                BOOL active = a ? (a == 2) : (GetForegroundWindow() == h);
-                HBRUSH band = CreateSolidBrush(active ? W31_NAVY : W31_FACE);
-                FrameRect((HDC)w, &rc, band);
-                InflateRect(&rc, -1, -1);
-                FrameRect((HDC)w, &rc, band);
-                DeleteObject(band);
-            }
             return 1;
         }
         case WM_PAINT: {

@@ -2077,6 +2077,12 @@ static BOOL HLPFILE_ReadFont(HLPFILE* hlpfile)
         hlpfile->fonts[i].color = RGB(ref[dscr_offset + i * 11 + 5],
                                       ref[dscr_offset + i * 11 + 6],
                                       ref[dscr_offset + i * 11 + 7]);
+        /* TELETEXT PORT: 0x000101 (R 1, G 1, B 0) is the Help Compiler's
+         * "default colour" (every file's three preamble fonts, and TTTEST's
+         * text); WinHelp 3.1 draws it in the window text colour, black
+         * (pixel scan: #000000 there, #010100 here before this) */
+        if (hlpfile->fonts[i].color == RGB(1, 1, 0))
+            hlpfile->fonts[i].color = RGB(0, 0, 0);
 #define X(b,s) ((flag & (1 << b)) ? "-"s: "")
         WINE_TRACE("Font[%d]: flags=%02x%s%s%s%s%s%s pSize=%u family=%u face=%s[%u] color=%08x\n",
                    i, flag,

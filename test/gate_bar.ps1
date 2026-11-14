@@ -1,7 +1,7 @@
 # gate_bar.ps1 - phase 2a gap 3 gate: WinHelp 3.1 button bar, menus and
 # strings, with REAL input on monitor 2 at the real window size (679x596).
 # Expected values: the real WINHELP.EXE 3.10 in the WfW 3.11 VM
-# (real_menu_*.png, vm_tt.png pixel scan: buttons 60x21, edge to edge).
+# (real_menu_*.png, vm_tt.png pixel scan: buttons 59x21, edge to edge).
 param([string]$Out = "D:\winhelp_corpus\p2a\gate")
 . "$PSScriptRoot\ttw_lib.ps1"
 . "$PSScriptRoot\ttw_input.ps1"
@@ -15,6 +15,9 @@ public class TtMenu {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr m, uint id, StringBuilder s, int max, uint flags);
   [DllImport("user32.dll")] public static extern uint GetMenuState(IntPtr m, uint id, uint flags);
   [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr h);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr GetProp(IntPtr h, string name);
+  // w31 owns the menu bar (19 px caption, 2026-11-13): SetMenu(NULL), the HMENU in a property
+  public static IntPtr BarMenu(IntPtr h) { IntPtr m = GetMenu(h); return m != IntPtr.Zero ? m : GetProp(h, "NavW31.Menu"); }
   public static string Item(IntPtr m, int p) { var sb = new StringBuilder(256); GetMenuString(m, (uint)p, sb, 256, 0x400); return sb.ToString(); }
   public static string Tree(IntPtr menu) {
     var sb = new StringBuilder();
@@ -40,7 +43,7 @@ $run = Start-Ttw -Exe "$PSScriptRoot\..\build\TTWINHLP.EXE" -Arguments "`"D:\win
 if ((Test-TtwOnMonitor2 $run).Count) { $run.Proc.Kill(); "MONITOR FAIL"; exit 2 }
 
 "Menus:"
-$tree = [TtMenu]::Tree([TtMenu]::GetMenu($run.Main))
+$tree = [TtMenu]::Tree([TtMenu]::BarMenu($run.Main))
 "  $tree"
 Check "menu bar = File Edit Bookmark Help, items as WinHelp 3.1" ($tree -ceq '&File {&Open...|-|&Print Topic|P&rint Setup...|-|E&xit} &Edit {&Copy...|-|&Annotate...} Book&mark {&Define...} &Help {&How to Use Help|Always on &Top|-|&About Help...}') $tree
 
@@ -52,7 +55,7 @@ $labels = ($btns | ForEach-Object { $_.T }) -join " "
 "  $labels"
 Check "labels and order: Contents Search Back History << >>" ($labels -ceq '&Contents &Search &Back His&tory &<< &>>') $labels
 $sizes = ($btns | ForEach-Object { "{0}x{1}" -f $_.W, $_.Ht } | Sort-Object -Unique) -join ","
-Check "every button 60x21 (real pixel scan)" ($sizes -eq "60x21") $sizes
+Check "every button 59x21 (real pixel scan)" ($sizes -eq "59x21") $sizes
 $adj = $true; for ($i = 1; $i -lt $btns.Count; $i++) { if ($btns[$i].X -ne $btns[$i-1].X + $btns[$i-1].W) { $adj = $false } }
 Check "buttons edge to edge" $adj
 $states = ($btns | ForEach-Object { if ($_.On) { "on" } else { "off" } }) -join " "
