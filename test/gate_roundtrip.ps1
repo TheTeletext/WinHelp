@@ -12,8 +12,10 @@ if (-not $SkipCompile) {
     }
     Copy-Item "$src\TTLOGO.BMP" $Build -Force
     Remove-Item "$Build\TTTEST.HLP", "$Build\HC.LOG" -ErrorAction SilentlyContinue
-    & "$PSScriptRoot\run_watched.ps1" -Exe "C:\Program Files\DOSBox Staging\dosbox.exe" -ArgList @('-noprimaryconf', '-nolocalconf',
-        '-conf', "$Build\hc.conf", '-c', "`"mount c $Build`"", '-c', 'c:', '-c', '"HC TTTEST.HPJ > HC.LOG"', '-c', 'exit') -TimeoutS 120
+    # headless: DOSBox on a private desktop, no window on any monitor (phase 2b)
+    $hc = & "$PSScriptRoot\hc_headless.ps1" -Project TTTEST.HPJ -Build $Build -TimeoutS 120 2>$null
+    Copy-Item "$Build\TTTEST.LOG" "$Build\HC.LOG" -Force -ErrorAction SilentlyContinue
+    Check "HC ran headless (no window on the user's desktop)" (($hc -join "`n") -match "windows seen on the user's desktop: 0")
     $log = Get-Content "$Build\HC.LOG" -Raw
     Check "HC compiled TTTEST.HLP" (Test-Path "$Build\TTTEST.HLP")
     Check "HC reported no errors or warnings" ($log -notmatch '(?i)error|warning')
