@@ -72,6 +72,24 @@ if ($dlg -ne [IntPtr]::Zero) {
     $edge2 = (($W2 - 6)..($W2 - 1) | ForEach-Object { Px $d $_ 150 }) -join " "
     Check "Search frame = 4 px navy + black (right)"  ($edge2 -eq "FFFFFF 000080 000080 000080 000080 000000") $edge2
     $d.Dispose()
+    # phase 2b: DEACTIVATED, the 3.1 default title colours (InactiveTitle white,
+    # InactiveTitleText black): the frame band and the caption go white. (The
+    # VM showed grey: its custom scheme "The Blues", read from its WIN.INI.)
+    # Another window, made ON monitor 2, takes the activation by a real click.
+    Add-Type -AssemblyName System.Windows.Forms
+    $m2 = Get-TtwMonitor2
+    $form = New-Object System.Windows.Forms.Form
+    $form.StartPosition = "Manual"; $form.Location = New-Object System.Drawing.Point(($m2.X + 20), ($m2.Bottom - 200))
+    $form.Size = New-Object System.Drawing.Size(220, 140); $form.Text = "other window"
+    $form.Show(); [System.Windows.Forms.Application]::DoEvents()
+    Invoke-TtwClick ($m2.X + 120) ($m2.Bottom - 120); [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 700
+    $d = Snap $dlg "chrome_search_inactive"
+    $edgeI = (0..5 | ForEach-Object { Px $d $_ 150 }) -join " "
+    Check "Search deactivated: frame = black + 4 px WHITE (3.1 default InactiveTitle)" ($edgeI -eq "000000 FFFFFF FFFFFF FFFFFF FFFFFF FFFFFF") $edgeI
+    Check "Search deactivated: caption white"  ((Px $d 200 10) -eq "FFFFFF") (Px $d 200 10)
+    $d.Dispose()
+    $form.Close(); $form.Dispose()
+    Set-TtwActive $dlg | Out-Null
     Send-TtwKeys "{ESC}{WAIT:400}"
 } else { Check "Search dialog opened" $false }
 "  activate: " + (Set-TtwActive $run.Main)

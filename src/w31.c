@@ -858,7 +858,7 @@ static int   g_cap_pressed = CAP_NONE;
  *     rows 4..21, rule row 22; menu bar rows 23..40, rule row 41; client
  *     from row 42 (row 23 without a menu), 4 px in from the sides and
  *     bottom. Boxes 18 px + a 1 px black rule.
- *   dialog: 1 black + 4 band (navy active, #C0C0C0 inactive) on the left,
+ *   dialog: 1 black + 4 band (navy active, white inactive: the 3.1 default title colours) on the left,
  *     right and bottom; top black + 3 band; a 1 px white margin row 4 and
  *     column 5 (and W-6) round the caption; caption rows 5..22, rule row
  *     23, client from row 24, 5 px in.
@@ -1124,7 +1124,11 @@ static void cap_frame(HWND h, HDC dc, const RECT *bar, const RECT *sys)
         nc_layout(h, W, H, &L);
         off = L.o;
         if (L.kind == 2) {
-            band = CreateSolidBrush(g_cap_frame_active ? W31_NAVY : W31_FACE);
+            /* TELETEXT PORT (phase 2b): a 3.1 dialog frame takes the TITLE
+             * colours, ActiveTitle / InactiveTitle: navy / white in the 3.1
+             * default scheme. The VM's grey was its custom scheme "The Blues"
+             * (InactiveTitle 192,192,192; read from its WIN.INI/CONTROL.INI). */
+            band = CreateSolidBrush(g_cap_frame_active ? W31_NAVY : W31_WINDOW);
             SetRect(&o, 0, 0, W, H);
             SetRect(&in, 5, 4, W - 5, H - 5);
             ring = CreateRectRgnIndirect(&o);
@@ -1185,8 +1189,9 @@ static void cap_frame(HWND h, HDC dc, const RECT *bar, const RECT *sys)
      * is the double black outline: black, gray, black (Windows 11's border is
      * 8 px where Windows 3.1's was 4; owed, see the phase 2a report). */
     if (g_w31_plain && !(GetWindowLongA(h, GWL_STYLE) & WS_THICKFRAME)) {
-        /* active navy, inactive #C0C0C0 (VM: Search under the Task List) */
-        HBRUSH band = CreateSolidBrush(g_cap_frame_active ? W31_NAVY : W31_FACE);
+        /* active navy, inactive white: the title colours of the 3.1 default
+         * scheme (phase 2b; the VM's grey came from its custom scheme) */
+        HBRUSH band = CreateSolidBrush(g_cap_frame_active ? W31_NAVY : W31_WINDOW);
         FillRgn(dc, ring, band);
         DeleteObject(band);
         DeleteObject(hole);

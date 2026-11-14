@@ -428,6 +428,11 @@ HLPFILE_WINDOWINFO*     WINHELP_GetWindowInfo(HLPFILE* hlpfile, LPCSTR name)
  * - Nothing is left to CW_USEDEFAULT, which would put the window wherever
  *   Windows likes (in practice the primary monitor).
  */
+/* TELETEXT PORT (phase 2b): the window of the application that last asked
+ * for Help (WM_COPYDATA's wParam): with no stored position, Help opens on
+ * that application's monitor, not on the primary. */
+static HWND tt_caller;
+
 static void TT_PlaceWindow(const HLPFILE_WINDOWINFO *wi, BOOL primary,
                            POINT *pos, SIZE *size)
 {
@@ -437,7 +442,11 @@ static void TT_PlaceWindow(const HLPFILE_WINDOWINFO *wi, BOOL primary,
     MONITORINFO mi;
     LONG ww, wh;
 
-    if (Globals.active_win && Globals.active_win->hMainWnd)
+    if (!have_saved && tt_caller && IsWindow(tt_caller) &&
+        (!Globals.active_win || !Globals.active_win->hMainWnd ||
+         !IsWindowVisible(Globals.active_win->hMainWnd)))
+        mon = MonitorFromWindow(tt_caller, MONITOR_DEFAULTTOPRIMARY);
+    else if (Globals.active_win && Globals.active_win->hMainWnd)
         mon = MonitorFromWindow(Globals.active_win->hMainWnd, MONITOR_DEFAULTTOPRIMARY);
     else if (have_saved)
         mon = MonitorFromRect(&saved, MONITOR_DEFAULTTOPRIMARY);
@@ -717,6 +726,24 @@ static LRESULT  WINHELP_HandleCommand(HWND hSrcWnd, LPARAM lParam)
     }
 
     wh = cds->lpData;
+
+    /* TELETEXT PORT (phase 2b): first Help of a hidden start (an
+     * application's WinHelp() starts us with -x): with no stored position,
+     * move the still-hidden main window to the caller's monitor before the
+     * topic shows it (TT_PlaceWindow, tt_caller). */
+    if (hSrcWnd && IsWindow(hSrcWnd)) tt_caller = hSrcWnd;
+    if (tt_caller && Globals.active_win && Globals.active_win->hMainWnd &&
+        !IsWindowVisible(Globals.active_win->hMainWnd))
+    {
+        RECT saved;
+        if (!TT_LoadWindowPos("M_WindowPosition", &saved, NULL))
+        {
+            POINT pos; SIZE size;
+            TT_PlaceWindow(Globals.active_win->info, TRUE, &pos, &size);
+            SetWindowPos(Globals.active_win->hMainWnd, NULL, pos.x, pos.y, size.cx, size.cy,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
 
     if (wh)
     {
