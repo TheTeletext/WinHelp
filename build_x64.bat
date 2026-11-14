@@ -12,7 +12,12 @@ flex -o build\macro.lex.yy.c src\macro.lex.l || goto fail
 
 windres -I src -O coff -o build\winhlp32.res src\winhlp32.rc || goto fail
 
-set CFLAGS=-O2 -g -Wall -fno-strict-aliasing -include ttcompat.h -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -Icompat -Isrc
+rem Reproducible: the build directory is mapped to "." in debug info and
+rem __FILE__ (both slash forms), and the PE timestamp is left out, so a fresh
+rem clone anywhere rebuilds the same bytes (LGPL corresponding source).
+set "SRCDIR=%CD%"
+set "SRCDIRF=%CD:\=/%"
+set CFLAGS=-O2 -g -Wall -fno-strict-aliasing -include ttcompat.h -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -Icompat -Isrc "-ffile-prefix-map=%SRCDIR%=." "-ffile-prefix-map=%SRCDIRF%=." -Wl,--no-insert-timestamp
 
 gcc %CFLAGS% -mwindows -o build\%TARGET% ^
   src\callback.c src\hlpfile.c src\macro.c build\macro.lex.yy.c src\string.c src\winhelp.c ^
