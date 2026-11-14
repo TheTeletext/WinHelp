@@ -533,7 +533,8 @@ void CALLBACK MACRO_History(void)
 
     if (Globals.active_win && !Globals.active_win->hHistoryWnd)
     {
-        HWND hWnd = CreateWindowA(HISTORY_WIN_CLASS_NAME, "History", WS_OVERLAPPEDWINDOW,
+        /* TELETEXT PORT (item 8): the real caption is "Windows Help History" */
+        HWND hWnd = CreateWindowA(HISTORY_WIN_CLASS_NAME, "Windows Help History", WS_OVERLAPPEDWINDOW,
                                  0, 0, 0, 0, 0, 0, Globals.hInstance, Globals.active_win);
         if (hWnd) w31_caption_attach(hWnd);   /* TELETEXT PORT (gap 4): 3.1 title bar */
         ShowWindow(hWnd, SW_NORMAL);

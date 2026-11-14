@@ -18,7 +18,7 @@ Check "'telnet' -> Telnet, top 2"             ($t -match '2word: edit=\[telnet\]
 Check "Show Topics: keyword spelling, Close, Go To default" ($t -match '3show: edit=\[Telnet\].*goto=True def=0x167 cancel=\[Close\]')
 Check "two topics, sorted: Connecting|Settings" ($t -match 'topics=\[Connecting\|Settings\] topicsel=0')
 Check "Down selects Settings"                 ($t -match '4down: .*topicsel=1')
-Check "dialog at +34,+42, 394x329 outside"    ($t -match 'dialog at \+34,\+42 size 394x329')
+Check "dialog at +34,+42, 399x333 outside (real: 1 black + 4 navy + 389 + 4 + 1)" ($t -match 'dialog at \+34,\+42 size 399x333')
 Check "Go To closes the dialog"               ($t -match 'dialog gone=True')
 Check "Go To opened Settings"                 ($t -match 'topic text: Settings')
 Check "monitor 2 guard"                       ($t -notmatch 'MONITOR FAIL')

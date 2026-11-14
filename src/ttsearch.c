@@ -68,7 +68,8 @@ static const struct { int id, x, y, w, h; } tt_layout[] =
     { IDC_TTS_GOTO,    286, 167, 94,  23 },
     { IDC_TTS_TOPICS,  5,   202, 378, 92 },
 };
-#define TT_CLIENT_W 388
+#define TT_CLIENT_W 389
+#define TT_BAND_IN  2   /* see tts_layout */
 #define TT_CLIENT_H 300
 
 static void tts_kw_entry(const BYTE *p, int *count, DWORD *kwoff)
@@ -190,7 +191,9 @@ static LRESULT CALLBACK tts_edit_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 static void tts_layout(HWND dlg, struct tt_search *s)
 {
-    RECT rc = { 0, 0, TT_CLIENT_W, TT_CLIENT_H }, wr, wa;
+    /* TELETEXT PORT: + the 2 px of the 3.1 dialog band that w31 paints
+     * inside the client (real frame: 1 black + 4 navy); controls move by 2 */
+    RECT rc = { 0, 0, TT_CLIENT_W + 2 * TT_BAND_IN, TT_CLIENT_H + 2 * TT_BAND_IN }, wr, wa;
     unsigned i;
     HWND owner = GetWindow(dlg, GW_OWNER);
 
@@ -222,7 +225,7 @@ static void tts_layout(HWND dlg, struct tt_search *s)
             SetWindowLongA(c, GWL_EXSTYLE, GetWindowLongA(c, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
             SetWindowLongA(c, GWL_STYLE, GetWindowLongA(c, GWL_STYLE) | WS_BORDER);
         }
-        SetWindowPos(c, NULL, tt_layout[i].x, tt_layout[i].y, tt_layout[i].w,
+        SetWindowPos(c, NULL, tt_layout[i].x + TT_BAND_IN, tt_layout[i].y + TT_BAND_IN, tt_layout[i].w,
                      tt_layout[i].h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         SendMessageA(c, WM_SETFONT, (WPARAM)s->font, FALSE);
     }

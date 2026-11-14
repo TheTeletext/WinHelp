@@ -23,6 +23,10 @@ $W = $wr.R - $wr.L
 "Main window (active):"
 $b = Snap $run.Main "chrome_main_active"
 Check "outer frame pixel is black (Win 3.1 frame line)" ((Px $b 0 100) -eq "000000") (Px $b 0 100)
+# the real sizable frame: the double black outline (black, gray, black).
+# Ours is 8 px (Windows 11's sizing border) where the real one is 4.
+$fr = (0..8 | ForEach-Object { Px $b $_ 300 }) -join " "
+Check "sizable frame = double black outline (black, gray..., black)" ($fr -match '^000000 C0C0C0 (C0C0C0 )*000000 FFFFFF') $fr
 Check "caption navy when active"                       ((Px $b 200 10) -eq "000080") (Px $b 200 10)
 Check "title text white, centred"                       ((0..$W | Where-Object { $_ -gt 250 -and $_ -lt 430 } | ForEach-Object { Px $b $_ 13 }) -contains "FFFFFF")
 Check "system-menu box at the left (gray face)"        ((Px $b 12 6) -eq "C0C0C0") (Px $b 12 6)
@@ -46,6 +50,12 @@ if ($dlg -ne [IntPtr]::Zero) {
     $d = Snap $dlg "chrome_search"
     Check "Search: navy 3.1 caption"     ((Px $d 200 10) -eq "000080") (Px $d 200 10)
     Check "Search: white dialog face"    ((Px $d 200 120) -eq "FFFFFF") (Px $d 200 120)
+    # the real fixed-dialog frame: 1 px black + 4 px navy (active), then white
+    $edge = (0..5 | ForEach-Object { Px $d $_ 150 }) -join " "
+    Check "Search frame = black + 4 px navy, as the real one (left)"  ($edge -eq "000000 000080 000080 000080 000080 FFFFFF") $edge
+    $W2 = $d.Width
+    $edge2 = (($W2 - 6)..($W2 - 1) | ForEach-Object { Px $d $_ 150 }) -join " "
+    Check "Search frame = 4 px navy + black (right)"  ($edge2 -eq "FFFFFF 000080 000080 000080 000080 000000") $edge2
     $d.Dispose()
     Send-TtwKeys "{ESC}{WAIT:400}"
 } else { Check "Search dialog opened" $false }
@@ -55,6 +65,8 @@ $ab = Get-TtwDialog $run "About Help" 2000
 if ($ab -ne [IntPtr]::Zero) {
     $d = Snap $ab "chrome_about"
     Check "About: navy 3.1 caption"      ((Px $d 150 10) -eq "000080") (Px $d 150 10)
+    $edge = (0..5 | ForEach-Object { Px $d $_ 120 }) -join " "
+    Check "About frame = black + 4 px navy (real About Help)" ($edge -eq "000000 000080 000080 000080 000080 FFFFFF") $edge
     $d.Dispose()
     Send-TtwKeys "{ENTER}{WAIT:400}"
 } else { Check "About opened" $false }

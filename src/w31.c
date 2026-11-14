@@ -39,6 +39,8 @@ HFONT g_hFontUI = NULL;
  * w31_set_plain(TRUE) before the first window. */
 static BOOL g_w31_plain = FALSE;
 void w31_set_plain(BOOL on) { g_w31_plain = on; }
+/* TELETEXT PORT: frame rules for plain 3.1 (see cap_frame) */
+static int g_cap_frame_active = 1;   /* set by cap_paint for cap_frame */
 
 HBRUSH g_w31_br_face   = NULL;
 HBRUSH g_w31_br_window = NULL;
@@ -898,6 +900,23 @@ static void cap_frame(HWND h, HDC dc, const RECT *bar, const RECT *sys)
     ring = CreateRectRgnIndirect(&o);
     hole = CreateRectRgnIndirect(&in);
     CombineRgn(ring, ring, hole, RGN_DIFF);
+    /* TELETEXT PORT (plain 3.1, operator request 2026-11-13): a dialog
+     * frame (no sizing border) is ONE thick band in the caption's colour,
+     * navy when active, white when not, inside a 1px black line: the real
+     * WinHelp Search box is black + 4 px navy (VM pixel scan); 2 of those 4
+     * px are painted inside the client (w31 KIND_DIALOG). A sizable frame
+     * is the double black outline: black, gray, black (Windows 11's border is
+     * 8 px where Windows 3.1's was 4; owed, see the phase 2a report). */
+    if (g_w31_plain && !(GetWindowLongA(h, GWL_STYLE) & WS_THICKFRAME)) {
+        /* active navy, inactive #C0C0C0 (VM: Search under the Task List) */
+        HBRUSH band = CreateSolidBrush(g_cap_frame_active ? W31_NAVY : W31_FACE);
+        FillRgn(dc, ring, band);
+        DeleteObject(band);
+        DeleteObject(hole);
+        DeleteObject(ring);
+        FrameRect(dc, &o, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        return;
+    }
     FillRgn(dc, ring, g_w31_br_face);
     DeleteObject(hole);
     DeleteObject(ring);
@@ -933,6 +952,7 @@ static void cap_paint(HWND h, int active)
     }
     dc = GetWindowDC(h);
     if (!dc) return;
+    g_cap_frame_active = active;   /* TELETEXT PORT: the dialog frame follows the caption */
     cap_frame(h, dc, &bar, &sys);
 
     /* the bar */
@@ -2594,6 +2614,23 @@ static LRESULT W31ProcInner(HWND h, UINT m, WPARAM w, LPARAM l)
         }
     }
 
+    /* TELETEXT PORT (plain 3.1 frames): a dialog's band continues 2 px into
+     * the client, so repaint those strips when the activation changes. */
+    if (g_w31_plain && (kind & KIND_CAPTION)) {
+        if (m == WM_NCACTIVATE && (kind & KIND_DIALOG) &&
+            !(GetWindowLongA(h, GWL_STYLE) & WS_THICKFRAME)) {
+            RECT rc, s;
+            GetClientRect(h, &rc);
+            SetRect(&s, 0, 0, rc.right, 2);                   InvalidateRect(h, &s, TRUE);
+            SetRect(&s, 0, rc.bottom - 2, rc.right, rc.bottom); InvalidateRect(h, &s, TRUE);
+            SetRect(&s, 0, 0, 2, rc.bottom);                  InvalidateRect(h, &s, TRUE);
+            SetRect(&s, rc.right - 2, 0, rc.right, rc.bottom); InvalidateRect(h, &s, TRUE);
+        }
+        /* (A window region that clipped the outer 4 px of a sizable frame
+         * was tried and backed out: with a region set, Windows 11 stops
+         * laying out the non-client area. See the phase 2a report.) */
+    }
+
     if (kind & KIND_CAPTION) {
         LRESULT res;
         if (m == WM_NCCREATE) cap_prepare(h);   /* a dialog marked at birth */
@@ -2807,6 +2844,18 @@ static LRESULT W31ProcInner(HWND h, UINT m, WPARAM w, LPARAM l)
             RECT rc;
             GetClientRect(h, &rc);
             FillRect((HDC)w, &rc, g_w31_plain ? g_w31_br_window : g_w31_br_face);  /* TELETEXT PORT */
+            if (g_w31_plain && (kind & KIND_CAPTION) &&
+                !(GetWindowLongA(h, GWL_STYLE) & WS_THICKFRAME)) {
+                /* TELETEXT PORT: the last 2 px of the real 4 px dialog band
+                 * (Windows' dialog border is 3 px: black + 2 band) */
+                INT_PTR a = (INT_PTR)GetPropA(h, PROP_ACT);
+                BOOL active = a ? (a == 2) : (GetForegroundWindow() == h);
+                HBRUSH band = CreateSolidBrush(active ? W31_NAVY : W31_FACE);
+                FrameRect((HDC)w, &rc, band);
+                InflateRect(&rc, -1, -1);
+                FrameRect((HDC)w, &rc, band);
+                DeleteObject(band);
+            }
             return 1;
         }
         case WM_PAINT: {

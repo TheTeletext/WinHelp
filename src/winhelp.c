@@ -113,6 +113,10 @@ static DWORD CALLBACK WINHELP_RtfStreamIn(DWORD_PTR cookie, BYTE* buff,
 #define CTL_ID_RULE     0x703
 /* TELETEXT PORT (gap 2): the RichEdit a mouse message came from (text or band) */
 static int tt_link_ctl = 0x701 /* CTL_ID_TEXT */;
+/* TELETEXT PORT (phase 2a, item 8): the History list's highlighted entry.
+ * WinHelp 3.1 highlights the PREVIOUS topic (entry 1; the current one is
+ * entry 0), so Enter goes back (real_history.png). */
+static unsigned tt_hist_sel;
 
 static void TT_SetupNsr(WINHELP_WINDOW* win)
 {
@@ -479,6 +483,7 @@ static void TT_PlaceWindow(const HLPFILE_WINDOWINFO *wi, BOOL primary,
 #define TT_POP_PADX      10
 #define TT_POP_PADY      4
 #define TT_POP_SHADOW    12
+#define TT_POP_RESLACK   8   /* RichEdit needs ~8 px past the last glyph not to wrap; the real padding is 10 px of white past the ink */
 static POINT tt_popup_click;
 static const char TT_SHADOW_CLASS[] = "TTWinHelpShadow";
 
@@ -564,38 +569,37 @@ static void TT_FitPopup(WINHELP_WINDOW* win)
     GetClientRect(hText, &tr);
     lines = (int)SendMessageW(hText, EM_GETLINECOUNT, 0, 0);
     WINE_TRACE("TT fit: %d lines, text window %ldx%ld\n", lines, tr.right, tr.bottom);
-    for (i = 0; i < lines; i++)
+    /* The narrowest text width that keeps exactly the same line breaks:
+     * the widest line, whether it ends a paragraph or wraps (the real
+     * WinHelp shrinks a wrapped popup to its widest line too: the Chameleon
+     * glossary's "access" is 436 px, not its maximum). A binary search on
+     * the line starts; EM_POSFROMCHAR at a line end overstated the width
+     * by ~11 px in Microsoft's RichEdit. */
+    if (lines > 0 && lines <= 64)
     {
-        int idx = (int)SendMessageW(hText, EM_LINEINDEX, i, 0);
-        int next = (i + 1 < lines) ? (int)SendMessageW(hText, EM_LINEINDEX, i + 1, 0)
-                                   : (int)SendMessageW(hText, WM_GETTEXTLENGTH, 0, 0) + 1;
-        WCHAR last[2] = { 0, 0 };
-        TEXTRANGEW tr2;
-        POINTL p;
-        if (next - 1 <= idx) continue;                    /* empty line */
-        /* the line's last character: a paragraph or line break ends it;
-         * anything else means RichEdit wrapped it */
-        tr2.chrg.cpMin = next - 1; tr2.chrg.cpMax = next;
-        tr2.lpstrText = last;
-        SendMessageW(hText, EM_GETTEXTRANGE, 0, (LPARAM)&tr2);
-        /* x of the line's last character: a break or the space RichEdit
-         * wrapped at sits right where the text ends (the real WinHelp
-         * shrinks a wrapped popup to its widest line too: the Chameleon
-         * glossary's "access" is 436 px, not its maximum) */
-        SendMessageW(hText, EM_POSFROMCHAR, (WPARAM)&p, next - 1);
-        if (i + 1 < lines && last[0] != '\r' && last[0] != '\v' && last[0] != '\n' && last[0] != ' ')
+        LONG starts[64];
+        int lo = 16, hi = tr.right, mid;
+        for (i = 0; i < lines; i++) starts[i] = (LONG)SendMessageW(hText, EM_LINEINDEX, i, 0);
+        while (lo < hi)
         {
-            wrapped = TRUE;          /* broken inside a word: assume full width */
-            break;
+            BOOL same;
+            mid = (lo + hi) / 2;
+            SetWindowPos(hText, NULL, 0, 0, mid, tr.bottom, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            same = ((int)SendMessageW(hText, EM_GETLINECOUNT, 0, 0) == lines);
+            for (i = 0; same && i < lines; i++)
+                same = ((LONG)SendMessageW(hText, EM_LINEINDEX, i, 0) == starts[i]);
+            if (same) hi = mid; else lo = mid + 1;
         }
-        WINE_TRACE("TT fit: line %d [%d..%d) end.x %ld\n", i, idx, next, p.x);
-        if (p.x > widest) widest = p.x;
+        widest = lo;
+        WINE_TRACE("TT fit: narrowest same-break width %d of %ld\n", widest, tr.right);
     }
+    else
+        wrapped = TRUE;
     GetWindowRect(win->hMainWnd, &wr);
     w = wr.right - wr.left;
     if (!wrapped && widest > 0)
     {
-        int want = widest + 2 + 2 * (TT_POP_BORDER + TT_POP_PADX);
+        int want = widest + 2 * (TT_POP_BORDER + TT_POP_PADX) - TT_POP_RESLACK;
         if (want < w) w = want;
     }
     TT_WorkAreaFromWindow(Globals.active_win ? Globals.active_win->hMainWnd : win->hMainWnd, &wa);
@@ -807,6 +811,7 @@ void            WINHELP_LayoutMainWindow(WINHELP_WINDOW* win)
     if (tt_is_popup(win))
     {
         InflateRect(&rect, -(TT_POP_BORDER + TT_POP_PADX), -(TT_POP_BORDER + TT_POP_PADY));
+        rect.right += TT_POP_RESLACK;   /* the text window reaches into the right padding */
         text_top = rect.top;
     }
 
@@ -997,6 +1002,7 @@ static void WINHELP_RememberPage(WINHELP_WINDOW* win, WINHELP_WNDPAGE* wpage)
         Globals.history.index++;
         wpage->page->file->wRefCount++;
     }
+    tt_hist_sel = (Globals.history.index > 1) ? 1 : 0;   /* TELETEXT PORT (item 8) */
     if (win->hHistoryWnd) InvalidateRect(win->hHistoryWnd, NULL, TRUE);
 
     num = ARRAY_SIZE(win->back.set);
@@ -1249,7 +1255,11 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
          * Popups have no caption and keep their own frame (gap 5). */
         if (!bPopup && win->hMainWnd)
             w31_caption_attach(win->hMainWnd);
-        if (!bPopup)
+        /* TELETEXT PORT (phase 2a, item 9): only the main window has a
+         * button bar in WinHelp 3.1; secondary windows (the Chameleon
+         * glossary's "2nd") show none (real_glossary screens). Wine gave
+         * every non-popup window one. TTWINHLP_SECBAR=1: Wine's behaviour. */
+        if (!bPopup && (bPrimary || getenv("TTWINHLP_SECBAR")))
             /* Create button box and text Window */
             CreateWindowA(BUTTON_BOX_WIN_CLASS_NAME, "", WS_CHILD | WS_VISIBLE,
                          0, 0, 0, 0, win->hMainWnd, (HMENU)CTL_ID_BUTTON, Globals.hInstance, NULL);
@@ -1263,6 +1273,11 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
                                 0, 0, 0, 0, win->hMainWnd, (HMENU)CTL_ID_TEXT, Globals.hInstance, NULL);
         TT_RichEditEnablePictures(hTextWnd);   /* TELETEXT PORT: see ttport.c, 4 */
         SendMessageW(hTextWnd, EM_SETEDITSTYLE, SES_HIDEGRIDLINES, SES_HIDEGRIDLINES); /* TELETEXT PORT */
+        /* TELETEXT PORT (item 7): WinHelp 3.1 sets topic text 12 px inside
+         * the window (pixel scan, TTTEST); RichEdit's own inset is ~5 px.
+         * Popups have their measured padding instead (gap 5). */
+        if (!bPopup)
+            SendMessageW(hTextWnd, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(7, 0));
         SendMessageW(hTextWnd, EM_SETEVENTMASK, 0,
                     SendMessageW(hTextWnd, EM_GETEVENTMASK, 0, 0) | ENM_MOUSEEVENTS);
         win->origRicheditWndProc = (WNDPROC)SetWindowLongPtrA(hTextWnd, GWLP_WNDPROC,
@@ -1276,6 +1291,7 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
                                       0, 0, 0, 0, win->hMainWnd, (HMENU)CTL_ID_NSR, Globals.hInstance, NULL);
             TT_RichEditEnablePictures(hNsr);
             SendMessageW(hNsr, EM_SETEDITSTYLE, SES_HIDEGRIDLINES, SES_HIDEGRIDLINES);
+            SendMessageW(hNsr, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(7, 0));
             SendMessageW(hNsr, EM_SETEVENTMASK, 0,
                          SendMessageW(hNsr, EM_GETEVENTMASK, 0, 0) | ENM_MOUSEEVENTS | ENM_REQUESTRESIZE);
             SetWindowLongPtrA(hNsr, GWLP_WNDPROC, (LONG_PTR)WINHELP_RicheditWndProc);
@@ -1658,13 +1674,29 @@ static LRESULT CALLBACK WINHELP_HistoryWndProc(HWND hWnd, UINT msg, WPARAM wPara
         MoveWindow(hWnd, r.left, r.top, r.right - r.left, r.bottom - r.top, TRUE);
         ReleaseDC(hWnd, hDc);
         break;
+    /* TELETEXT PORT (phase 2a, item 8): the History list behaves as WinHelp
+     * 3.1's list box: a click selects, a double-click or Enter opens, Up and
+     * Down move the navy highlight. Wine opened the topic on a single click
+     * and highlighted nothing. */
     case WM_LBUTTONDOWN:
+    case WM_LBUTTONDBLCLK:
         hDc = GetDC(hWnd);
         GetTextMetricsW(hDc, &tm);
         i = HIWORD(lParam) / tm.tmHeight;
-        if (i < Globals.history.index)
-            WINHELP_CreateHelpWindow(&Globals.history.set[i], SW_SHOW, TRUE);
         ReleaseDC(hWnd, hDc);
+        if (i < Globals.history.index)
+        {
+            tt_hist_sel = i;
+            InvalidateRect(hWnd, NULL, TRUE);
+            if (msg == WM_LBUTTONDBLCLK)
+                WINHELP_CreateHelpWindow(&Globals.history.set[i], SW_SHOW, TRUE);
+        }
+        break;
+    case WM_KEYDOWN:
+        if (wParam == VK_UP && tt_hist_sel > 0) { tt_hist_sel--; InvalidateRect(hWnd, NULL, TRUE); }
+        else if (wParam == VK_DOWN && tt_hist_sel + 1 < Globals.history.index) { tt_hist_sel++; InvalidateRect(hWnd, NULL, TRUE); }
+        else if (wParam == VK_RETURN && tt_hist_sel < Globals.history.index)
+            WINHELP_CreateHelpWindow(&Globals.history.set[tt_hist_sel], SW_SHOW, TRUE);
         break;
     case WM_PAINT:
         hDc = BeginPaint(hWnd, &ps);
@@ -1672,9 +1704,23 @@ static LRESULT CALLBACK WINHELP_HistoryWndProc(HWND hWnd, UINT msg, WPARAM wPara
 
         for (i = 0; i < Globals.history.index; i++)
         {
+            /* TELETEXT PORT (item 8): navy highlight, 2 px left margin */
+            SetBkMode(hDc, TRANSPARENT);
+            if (i == tt_hist_sel)
+            {
+                RECT row;
+                HBRUSH navy = CreateSolidBrush(RGB(0, 0, 128));
+                GetClientRect(hWnd, &row);
+                row.top = i * tm.tmHeight; row.bottom = row.top + tm.tmHeight;
+                FillRect(hDc, &row, navy);
+                DeleteObject(navy);
+                SetTextColor(hDc, RGB(255, 255, 255));
+            }
+            else
+                SetTextColor(hDc, RGB(0, 0, 0));
             if (Globals.history.set[i].page->file == Globals.active_win->page->file)
             {
-                TextOutA(hDc, 0, i * tm.tmHeight,
+                TextOutA(hDc, 2, i * tm.tmHeight,
                         Globals.history.set[i].page->lpszTitle,
                         strlen(Globals.history.set[i].page->lpszTitle));
             }
@@ -1694,7 +1740,7 @@ static LRESULT CALLBACK WINHELP_HistoryWndProc(HWND hWnd, UINT msg, WPARAM wPara
                 memcpy(buffer, ptr1, len);
                 if (len < sizeof(buffer)) buffer[len++] = ':';
                 lstrcpynA(&buffer[len], Globals.history.set[i].page->lpszTitle, sizeof(buffer) - len);
-                TextOutA(hDc, 0, i * tm.tmHeight, buffer, strlen(buffer));
+                TextOutA(hDc, 2, i * tm.tmHeight, buffer, strlen(buffer));
             }
         }
         EndPaint(hWnd, &ps);
@@ -2297,6 +2343,7 @@ static BOOL WINHELP_RegisterWinClasses(void)
     class_history                  = class_main;
     class_history.lpfnWndProc      = WINHELP_HistoryWndProc;
     class_history.lpszClassName    = HISTORY_WIN_CLASS_NAME;
+    class_history.style           |= CS_DBLCLKS;   /* TELETEXT PORT (item 8): double-click opens */
 
     /* TELETEXT PORT (gap 5): the popup drop shadow */
     {

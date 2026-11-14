@@ -39,6 +39,17 @@ Window positions are kept, as WinHelp 3.1 kept them in WIN.INI
 Diagnostics: `TTWINHLP_LOG=<file>` writes the upstream FIXME/ERR channels
 (`TTWINHLP_LOGLEVEL` 0-3); `TTWINHLP_INI=<file>` uses another INI;
 `TTWINHLP_RICHED20=1` uses the RichEdit 2.0 class instead of msftedit.
+Phase 2a switches, each restoring Wine's or Windows' behaviour for
+comparison: `TTWINHLP_W11=1` (Windows 11 look instead of the Win 3.1
+chrome), `TTWINHLP_WINE_INDEX=1` (Wine's Index sheet instead of the 3.1
+Search dialog), `TTWINHLP_NO_NSR=1` (no non-scrolling band),
+`TTWINHLP_GREEN=1` (green hotspots), `TTWINHLP_NOSHADOW=1` (no popup
+shadow), `TTWINHLP_TTFONTS=1` (TrueType instead of the Helv/Tms Rmn bitmap
+faces), `TTWINHLP_SECBAR=1` (button bar in secondary windows).
+
+The Windows 3.1 chrome (`src/w31.c`, `src/w31.h`) comes from Teletext
+Navigator's `suite_w31.c`, relicensed for this copy under the LGPL 2.1+ by
+its author, Dimitri Papadopoulos (2026-11-13); see the file headers.
 
 ## Tests
 

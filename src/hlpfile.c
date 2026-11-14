@@ -1856,11 +1856,25 @@ BOOL    HLPFILE_BrowsePageRegion(HLPFILE_PAGE* page, struct RtfData* rd,
         case FF_DECORATIVE: family = "decor";   break;
         default:            family = "nil";     break;
         }
-        sprintf(tmp, "{\\f%d\\f%s\\fprq%d\\fcharset%d %s;}",
-                index, family,
-                hlpfile->fonts[index].LogFont.lfPitchAndFamily & 0x0F,
-                hlpfile->fonts[index].LogFont.lfCharSet,
-                hlpfile->fonts[index].LogFont.lfFaceName);
+        /* TELETEXT PORT (phase 2a, item 7): Windows 3.x's bitmap faces.
+         * Help files name "Helv" and "Tms Rmn"; Windows 11 still ships them
+         * as MS Sans Serif (sserife.fon) and MS Serif (serife.fon) and maps
+         * the old names in FontSubstitutes, but RichEdit binds fonts itself
+         * and does not read that table, so it fell back to a TrueType face.
+         * Name the bitmap faces directly. TTWINHLP_TTFONTS=1: as before. */
+        {
+            const char *face = hlpfile->fonts[index].LogFont.lfFaceName;
+            if (!getenv("TTWINHLP_TTFONTS"))
+            {
+                if (!lstrcmpiA(face, "Helv"))         face = "MS Sans Serif";
+                else if (!lstrcmpiA(face, "Tms Rmn")) face = "MS Serif";
+            }
+            sprintf(tmp, "{\\f%d\\f%s\\fprq%d\\fcharset%d %s;}",
+                    index, family,
+                    hlpfile->fonts[index].LogFont.lfPitchAndFamily & 0x0F,
+                    hlpfile->fonts[index].LogFont.lfCharSet,
+                    face);
+        }
         if (!HLPFILE_RtfAddControl(rd, tmp)) return FALSE;
     }
     if (!HLPFILE_RtfAddControl(rd, "}")) return FALSE;
