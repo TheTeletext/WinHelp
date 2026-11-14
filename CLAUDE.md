@@ -14,7 +14,7 @@ Reports live with the consumer, Navigator, in `..\mgt-unicorn-suite\docs\`.
   frames, 19 px caption with w31 owning the menu bar, pixel-diff residual
   sweep s14); gates gate_search/nsr/bar/chrome/popup/menu + corpus 110/110;
   open items and where phase 2b resumes: s13.
-- [WinHelp Revival phase 2b 2026-11-13](..\mgt-unicorn-suite\docs6-11-13_WinHelp_Revival_Phase2b.md) -
+- [WinHelp Revival phase 2b 2026-11-13](..\mgt-unicorn-suite\docs\2026-11-13_WinHelp_Revival_Phase2b.md) -
   source PUBLISHED at github.com/TheTeletext/WinHelp (reproducible build);
   TELETEXT.HLP (Navigator's help) + TTWINHLP.HLP (our How to Use Help);
   HC headless on a private desktop (test/hc_headless.ps1); help sources ->
@@ -22,6 +22,9 @@ Reports live with the consumer, Navigator, in `..\mgt-unicorn-suite\docs\`.
   = TITLE, key closes popup); gate_teletext; open items s8. s10: inactive
   dialog band WHITE (3.1 default title colours; the VM's grey is its custom
   scheme "The Blues"), Help on the caller's monitor at first start.
+- [Navigator 1.6 release 2026-11-14](..\mgt-unicorn-suite\docs\2026-11-14_NAVIGATOR_16_RELEASE.md) -
+  RELEASED as v0.3.0 (tag on f67a079, GitHub release with TTWINHLP.EXE 187ae2a6, TTWINHLP.HLP,
+  COPYING.LIB, SHA256SUMS); ships inside Teletext Navigator 1.6. A fresh clone rebuilds the exe byte for byte.
 
 ## Rules for this repo
 
