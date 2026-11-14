@@ -494,8 +494,12 @@ void CALLBACK MACRO_HelpOn(void)
     if (win && win->page && win->page->file)
         file = win->page->file->help_on_file;
 
+    /* TELETEXT PORT: WinHelp 3.1 opened WINHELP.HLP here, which Windows 11
+     * does not have; ours is TTWINHLP.HLP, installed beside TTWINHLP.EXE
+     * (SearchPath looks in the program's folder first). A file's own
+     * SetHelpOnFile() still wins. */
     if (!file)
-        file = (Globals.wVersion > 4) ? "winhlp32.hlp" : "winhelp.hlp";
+        file = "TTWINHLP.HLP";
 
     MACRO_JumpContents(file, NULL);
 }

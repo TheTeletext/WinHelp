@@ -1,0 +1,125 @@
+;; TTWINHLP.HLP source: How to Use Help, for The Teletext WinHelp.
+;; It replaces Windows 3.1's WINHELP.HLP, which Windows 11 does not have.
+;; Describe only what this viewer does; build with help\build_help.ps1.
+%title How to Use Help
+%contents howto_contents
+%copyright Copyright (c) 2026 The Teletext
+%config BrowseButtons()
+%map howto_contents 1
+
+@topic howto_contents | How to Use Help | How to Use Help;Help;using Help;contents | howto
+Help shows information about a program on your screen, while you work. Choose a topic to learn more.
+
+= Moving around in Help
+- [[howto_jumps|Jumps and Definitions]]
+- [[howto_buttons|The Help Buttons]]
+- [[howto_search|Searching for a Topic]]
+- [[howto_history|Going Back to Earlier Topics]]
+
+= Working with Help
+- [[howto_window|The Help Window]]
+- [[howto_copy|Copying Help Text]]
+- [[howto_ontop|Keeping Help on Top]]
+- [[howto_open|Opening Another Help File]]
+- [[howto_menus|Help Menu Commands]]
+
+= About this program
+- [[howto_about|About The Teletext WinHelp]]
+
+@topic howto_jumps | Jumps and Definitions | jumps;definitions;hotspots;popups;underlined words | howto
+Words in a Help topic that are shown in color and underlined lead you further. In most Help files they are green.
+
+= Jumps
+A word or phrase with a solid underline is a **jump**. Click it to go to the topic it names. The pointer becomes a hand when it is over a jump.
+
+= Definitions
+A word with a dotted underline has a **definition**. Click it and the definition appears in a small window over the topic. Click anywhere, or press any key, to close it.
+
+Some Help files also use pictures as jumps or definitions. The pointer becomes a hand over them too.
+
+To return to the topic you came from, choose the Back button.
+
+@topic howto_buttons | The Help Buttons | buttons;Contents button;Search button;Back button;History button;browse buttons | howto
+The buttons under the menu bar:
+
+- **Contents**: shows the Help file's contents, the topic it starts with.
+- **Search**: finds topics by keyword. See [[howto_search|Searching for a Topic]].
+- **Back**: returns to the topic you saw before this one. It is dimmed at the first topic.
+- **History**: lists the topics you have seen. See [[howto_history|Going Back to Earlier Topics]].
+- **<<** and **>>**: move to the previous or next topic in a series of related topics, called a browse sequence. A button is dimmed at the end of the series.
+
+Each button has an underlined letter: hold down ALT and press the letter to choose the button. Some Help files add buttons of their own.
+
+@topic howto_search | Searching for a Topic | Search;keywords;finding a topic;Show Topics;Go To | howto
+To find a topic by keyword:
+
+1. Choose the **Search** button. The Search dialog box opens.
+2. Type a word in the box, or choose one from the list. As you type, the list moves to the first keyword that begins with what you have typed.
+3. Choose **Show Topics**. The topics that have this keyword appear in the lower list.
+4. Choose a topic, then choose **Go To**.
+
+You can also double-click a keyword instead of choosing Show Topics, and double-click a topic instead of choosing Go To. After Show Topics, the Cancel button reads Close.
+
+@topic howto_history | Going Back to Earlier Topics | History;Back;earlier topics;returning to a topic | howto
+= Back
+Choose **Back** to return to the topic you saw before this one. Choose it again to go further back.
+
+= History
+Choose **History** to open the Windows Help History window, which lists the last topics you have seen, the most recent first. Topics from another Help file are shown with that file's name.
+
+To go to a topic, double-click it, or select it with the arrow keys and press ENTER. The History window stays open until you close it.
+
+@topic howto_window | The Help Window | Help window;scrolling;title band;window size;secondary windows | howto
+= Scrolling
+Use the scroll bar, the mouse wheel, or the PAGE UP, PAGE DOWN, UP ARROW and DOWN ARROW keys.
+
+In many Help files, the title of the topic stays at the top of the window, in a band of its own, while the rest of the topic scrolls under it.
+
+= Size and position
+Help remembers the size and position of its window for the next time.
+
+= Other windows
+Some Help files show certain topics in a window of their own, such as a glossary. These windows have no menu bar and no buttons; close them with their Control-menu box.
+
+= Closing Help
+Choose Exit from the File menu, or close the window with its Control-menu box.
+
+@topic howto_copy | Copying Help Text | copying;Copy;clipboard;selecting text | howto
+To copy text from a Help topic:
+
+1. Drag across the text with the mouse to select it.
+2. Choose **Copy** from the Edit menu, or press CTRL+C.
+
+The text is placed on the Clipboard, and you can paste it into another program.
+
+@topic howto_ontop | Keeping Help on Top | Always on Top;keeping Help visible;on top | howto
+To keep the Help window in front of the program you are using, choose **Always on Top** from the Help menu. A check mark appears beside the command. Choose it again to turn it off.
+
+@topic howto_open | Opening Another Help File | opening a Help file;Open;File menu | howto
+1. Choose **Open** from the File menu.
+2. Choose a Help file (a file whose name ends in .HLP), then choose Open.
+
+Help reads the Help files of Windows 3.0 and Windows 3.1.
+
+@topic howto_menus | Help Menu Commands | menus;File menu;Edit menu;Bookmark menu;Help menu | howto
+= File menu
+- **Open**: opens another Help file. See [[howto_open|Opening Another Help File]].
+- **Exit**: closes Help.
+
+= Edit menu
+- **Copy**: copies the selected text. See [[howto_copy|Copying Help Text]].
+
+= Help menu
+- **How to Use Help**: shows this Help. You can also press F1 in any Help window.
+- **Always on Top**: keeps Help in front of other windows. See [[howto_ontop|Keeping Help on Top]].
+- **About Help**: shows the version of this program, its licence and the address of its source code.
+
+= Not yet available
+Print Topic, Print Setup, Annotate and Define a bookmark are on the menus, as in Windows 3.1, but they do not work yet in this version.
+
+@topic howto_about | About The Teletext WinHelp | About;The Teletext WinHelp;licence;source code;Wine | howto
+The Teletext WinHelp (TTWINHLP.EXE) shows the Help files of Windows 3.0 and Windows 3.1 on today's Windows, where Microsoft no longer provides a Help program for them.
+
+It is based on the WinHelp viewer of the Wine project, and is free software under the GNU Lesser General Public License, version 2.1 or later. Its source code is at https://github.com/TheTeletext/WinHelp.
+
+Choose About Help from the Help menu for its version and credits.

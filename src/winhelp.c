@@ -401,6 +401,17 @@ HLPFILE_WINDOWINFO*     WINHELP_GetWindowInfo(HLPFILE* hlpfile, LPCSTR name)
         mwi.win_style = WS_OVERLAPPEDWINDOW;
         mwi.sr_color = mwi.nsr_color = 0xFFFFFF;
     }
+    else if (hlpfile)
+    {
+        /* TELETEXT PORT: mwi is filled once, so its caption stayed that of
+         * the first file (or "The Teletext WinHelp" when started with no
+         * file, as an application's WinHelp() call does): WinHelp 3.1
+         * captions the main window with the TITLE of the file it shows. */
+        if (hlpfile->lpszTitle[0])
+            snprintf(mwi.caption, sizeof(mwi.caption), "%s", hlpfile->lpszTitle);
+        else
+            LoadStringA(Globals.hInstance, STID_WINE_HELP, mwi.caption, sizeof(mwi.caption));
+    }
     return &mwi;
 }
 
@@ -679,6 +690,9 @@ typedef struct
     WORD ofsData;
 } WINHELP,*LPWINHELP;
 
+/* TELETEXT PORT: posted to the main window to open Search (HELP_PARTIALKEY) */
+#define TT_WM_SEARCH (WM_APP + 0x51)
+
 static BOOL WINHELP_HasWorkingWindow(void)
 {
     if (!Globals.active_win) return FALSE;
@@ -760,7 +774,20 @@ static LRESULT  WINHELP_HandleCommand(HWND hSrcWnd, LPARAM lParam)
         /* case HELP_SETPOPUP_POS: */
         /* case HELP_KEY: */
         /* case HELP_COMMAND: */
-        /* case HELP_PARTIALKEY: */
+        case HELP_PARTIALKEY:
+            /* TELETEXT PORT: an application's "Search for Help on" menu
+             * item: WinHelp 3.1 opened the file and its Search dialog box
+             * (with an empty key, as here). Wine left it unhandled. */
+            if (ptr)
+            {
+                MACRO_JumpContents(ptr, "main");
+                /* the dialog is modal: open it after this WM_COPYDATA has
+                 * returned, so the calling application is not held up */
+                if (WINHELP_HasWorkingWindow())
+                    PostMessageA(Globals.active_win->hMainWnd, TT_WM_SEARCH, 0, 0);
+            }
+            if (!WINHELP_HasWorkingWindow()) MACRO_Exit();
+            break;
         /* case HELP_MULTIKEY: */
         /* case HELP_SETWINPOS: */
         default:
@@ -2178,6 +2205,9 @@ static LRESULT CALLBACK WINHELP_MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, 
 /* EPP         break; */
     case WM_COPYDATA:
         return WINHELP_HandleCommand((HWND)wParam, lParam);
+    case TT_WM_SEARCH:   /* TELETEXT PORT: HELP_PARTIALKEY, deferred */
+        WINHELP_CreateIndexWindow(TRUE);
+        return 0;
 
     case WM_CHAR:
         if (wParam == 3)
@@ -2595,6 +2625,15 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show)
     while ((Globals.win_list || Globals.active_popup) && GetMessageW(&msg, 0, 0, 0))
     {
         HWND hWnd = Globals.active_win ? Globals.active_win->hMainWnd : NULL;
+        /* TELETEXT PORT: in WinHelp 3.1 any key closes a definition popup
+         * (and does nothing else); Wine closed it only on a click. */
+        if (Globals.active_popup && (msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN))
+        {
+            WINHELP_WINDOW* popup = Globals.active_popup;
+            Globals.active_popup = NULL;
+            WINHELP_ReleaseWindow(popup);
+            continue;
+        }
         if (!TranslateAcceleratorW(hWnd, hAccel, &msg))
 	{
             TranslateMessage(&msg);

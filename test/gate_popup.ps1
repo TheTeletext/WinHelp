@@ -68,6 +68,12 @@ $before = @([TtW]::Windows([uint32]$run.Proc.Id, $true) | Where-Object { [TtW]::
 Invoke-TtwClick ($tr.L + 300) ($tr.B - 40); Start-Sleep -Milliseconds 600
 $after = @([TtW]::Windows([uint32]$run.Proc.Id, $true) | Where-Object { [TtW]::Cls($_) -eq "TTWinHelpShadow" -or ([TtW]::Cls($_) -eq "MS_WINHELP" -and $_ -ne $run.Main) }).Count
 Check "a click elsewhere closes popup and shadow" ($before -eq 1 -and $after -eq 0) "before $before after $after"
+# phase 2b: in WinHelp 3.1 any key closes the popup (and does nothing else)
+Invoke-TtwClick ($tr.L + [int]($packed -band 0xFFFF) + 3) ($tr.T + [int](($packed -shr 16) -band 0xFFFF) + 7); Start-Sleep -Milliseconds 800
+$before = @([TtW]::Windows([uint32]$run.Proc.Id, $true) | Where-Object { [TtW]::Cls($_) -eq "TTWinHelpShadow" }).Count
+Send-TtwKeys "{DOWN}{WAIT:600}"
+$after = @([TtW]::Windows([uint32]$run.Proc.Id, $true) | Where-Object { [TtW]::Cls($_) -eq "TTWinHelpShadow" -or ([TtW]::Cls($_) -eq "MS_WINHELP" -and $_ -ne $run.Main) }).Count
+Check "a key closes popup and shadow (WinHelp 3.1)" ($before -eq 1 -and $after -eq 0) "before $before after $after"
 Check "monitor 2 guard" ((Test-TtwOnMonitor2 $run).Count -eq 0)
 Stop-Ttw $run | Out-Null
 "GATE POPUP: $pass PASS, $fail FAIL"

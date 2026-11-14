@@ -9,8 +9,10 @@
 #   %helpon NAME.HLP (SetHelpOnFile)           %copyright text for About
 #   %bitmap FILE.BMP ...                       %map ctx number  (help context ids)
 #   %config macro                              (one [CONFIG] line)
+#   %seqicon seq ICON.BMP  the icon of every topic in browse sequence seq
 #
-#   @topic ctx | Title | key1;key2 | browse:seq      (browse optional)
+#   @topic ctx | Title | key1;key2 | browse:seq | ICON.BMP   (browse, icon optional;
+#          the icon goes before the title, in the non-scrolling band)
 #   @popup ctx | Term                                 (a glossary popup topic)
 #   paragraphs, separated by blank lines; a line starting "- " is a bullet,
 #   "1. " a numbered step (continuation lines indented two spaces),
@@ -69,7 +71,7 @@ def source_lines(paths):
             yield path, n, raw
 
 def parse(paths):
-    meta = {"bitmaps": [], "config": [], "map": []}
+    meta = {"bitmaps": [], "config": [], "map": [], "seqicon": {}}
     topics = []
     cur = None
     for path, n, raw in source_lines(paths):
@@ -82,6 +84,8 @@ def parse(paths):
             if k in ("bitmap",): meta["bitmaps"] += v.split()
             elif k == "config": meta["config"].append(v)
             elif k == "map": meta["map"].append(v.split())
+            elif k == "seqicon":
+                a, b = v.split(); meta["seqicon"][a] = b
             else: meta[k] = v
             continue
         if line.startswith("@topic") or line.startswith("@popup"):
@@ -89,7 +93,8 @@ def parse(paths):
             f = [x.strip() for x in line[6:].split("|")]
             cur = {"kind": kind, "ctx": f[0], "title": f[1], "line": "%s:%d" % (os.path.basename(path), n),
                    "keys": f[2] if len(f) > 2 and kind == "topic" else "",
-                   "browse": f[3] if len(f) > 3 else "", "body": []}
+                   "browse": f[3] if len(f) > 3 else "",
+                   "icon": f[4] if len(f) > 4 else "", "body": []}
             topics.append(cur)
             continue
         if cur is None:
@@ -154,7 +159,10 @@ def build(srcs, outdir, base):
                 seqcount[seq] = seqcount.get(seq, 0) + 10
                 rtf.append("+{\\footnote %s:%03d}" % (seq, seqcount[seq]))
             # the title in the non-scrolling region (\keepn)
-            rtf.append("{\\keepn\\sb60\\sa120\\f0\\fs28\\b %s\\par}" % rtf_escape(t["title"]))
+            # an icon before the title, as the Chameleon help files have their services' icons
+            name = t["icon"] or meta["seqicon"].get(t["browse"].split(":")[0] if t["browse"] else "", "")
+            icon = ("\\{bmc %s\\} " % name) if name else ""
+            rtf.append("{\\keepn\\sb60\\sa120\\f0\\fs28\\b %s%s\\par}" % (icon, rtf_escape(t["title"])))
         else:
             # a glossary popup: no keywords, so Search lists only full topics
             rtf.append("\\pard\\sb60\\sa60\\f0\\fs20 {\\b %s}\\par" % rtf_escape(t["title"]))
