@@ -41,6 +41,28 @@ static BOOL g_w31_plain = FALSE;
 void w31_set_plain(BOOL on) { g_w31_plain = on; }
 /* TELETEXT PORT: frame rules for plain 3.1 (see cap_frame) */
 static int g_cap_frame_active = 1;   /* set by cap_paint for cap_frame */
+/* TELETEXT PORT (operator request 2026-11-13): a sizable frame 4 px wide,
+ * as Windows 3.1's (black, 2 px gray, black), not Windows 11's 8. Windows
+ * keeps WS_THICKFRAME (it still does the resizing); WM_NCCALCSIZE hands it
+ * the window rectangle grown by W31_SLIM_OUT per side, so it lays out its
+ * 8 px frame, the caption and the menu bar as if the outer 4 px were
+ * outside the window. Not while maximized or minimized. */
+#define W31_SLIM_OUT  4
+static BOOL cap_slim(HWND h)
+{
+    LONG st;
+    if (!g_w31_plain || !h) return FALSE;
+    st = GetWindowLongA(h, GWL_STYLE);
+    return (st & WS_THICKFRAME) && (st & WS_CAPTION) == WS_CAPTION &&
+           !(st & WS_MAXIMIZE) && !(st & WS_MINIMIZE);
+}
+/* the frame widths w31 paints with: Windows' own, less the slim offset */
+static void cap_borders(HWND h, const WINDOWINFO *wi, int *bx, int *by)
+{
+    *bx = (int)wi->cxWindowBorders;
+    *by = (int)wi->cyWindowBorders;
+    if (cap_slim(h)) { *bx -= W31_SLIM_OUT; *by -= W31_SLIM_OUT; }
+}
 
 HBRUSH g_w31_br_face   = NULL;
 HBRUSH g_w31_br_window = NULL;
@@ -778,7 +800,8 @@ static BOOL cap_rects(HWND h, RECT *bar, RECT *sys, RECT *mn, RECT *mx)
         ZeroMemory(&wi, sizeof wi);
         wi.cbSize = sizeof wi;
         if (GetWindowInfo(h, &wi)) {
-            int bx = (int)wi.cxWindowBorders, by = (int)wi.cyWindowBorders;
+            int bx, by;
+            cap_borders(h, &wi, &bx, &by);   /* TELETEXT PORT: slim frame */
             bar->left = bx;
             /* 2026-11-13 (Navigator 1.6, refshots/ref21): where the frame
              * is painted Windows 3.1 style (cap_frame), the bar's black
@@ -890,8 +913,7 @@ static void cap_frame(HWND h, HDC dc, const RECT *bar, const RECT *sys)
     ZeroMemory(&wi, sizeof wi);
     wi.cbSize = sizeof wi;
     if (!GetWindowInfo(h, &wi)) return;
-    bx = (int)wi.cxWindowBorders;
-    by = (int)wi.cyWindowBorders;
+    cap_borders(h, &wi, &bx, &by);   /* TELETEXT PORT: slim frame */
     if (bx < 3 || by < 3) return;
     W = wi.rcWindow.right - wi.rcWindow.left;
     H = wi.rcWindow.bottom - wi.rcWindow.top;
@@ -923,6 +945,21 @@ static void cap_frame(HWND h, HDC dc, const RECT *bar, const RECT *sys)
     FrameRect(dc, &o, (HBRUSH)GetStockObject(BLACK_BRUSH));
     InflateRect(&in, 1, 1);
     FrameRect(dc, &in, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    if (cap_slim(h) && GetMenu(h)) {
+        /* TELETEXT PORT (slim frame): Windows' menu bar starts 4 px inside
+         * the frame now; the gap at each end is menu-bar white */
+        MENUBARINFO mbi;
+        ZeroMemory(&mbi, sizeof mbi);
+        mbi.cbSize = sizeof mbi;
+        if (GetMenuBarInfo(h, OBJID_MENU, 0, &mbi)) {
+            RECT mb = mbi.rcBar, g;
+            OffsetRect(&mb, -wi.rcWindow.left, -wi.rcWindow.top);
+            SetRect(&g, bx, mb.top, mb.left, mb.bottom);
+            FillRect(dc, &g, g_w31_br_window);
+            SetRect(&g, mb.right, mb.top, W - bx, mb.bottom);
+            FillRect(dc, &g, g_w31_br_window);
+        }
+    }
     if (GetWindowLongA(h, GWL_STYLE) & WS_THICKFRAME) {
         int tx = sys->right - 1;                 /* from the left and right ends */
         int ty = bar->bottom - 1;                /* from the top and bottom ends */
@@ -2629,6 +2666,20 @@ static LRESULT W31ProcInner(HWND h, UINT m, WPARAM w, LPARAM l)
         /* (A window region that clipped the outer 4 px of a sizable frame
          * was tried and backed out: with a region set, Windows 11 stops
          * laying out the non-client area. See the phase 2a report.) */
+    }
+
+    if ((kind & KIND_CAPTION) && m == WM_NCCALCSIZE && cap_slim(h)) {
+        /* TELETEXT PORT: see cap_slim. Windows lays out its 8 px frame,
+         * caption and menu bar as usual (so its menu bar, hit tests and
+         * drop-downs stay where it thinks they are); the client then takes
+         * 4 of the 8 px on the left, right and bottom. At the top the
+         * caption is painted 4 px taller instead (cap_rects). */
+        RECT *rc = w ? &((NCCALCSIZE_PARAMS *)l)->rgrc[0] : (RECT *)l;
+        LRESULT r = call_old(h, m, w, l);
+        rc->left   -= W31_SLIM_OUT;
+        rc->right  += W31_SLIM_OUT;
+        rc->bottom += W31_SLIM_OUT;
+        return r;
     }
 
     if (kind & KIND_CAPTION) {

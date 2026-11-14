@@ -40,7 +40,22 @@ Check "button face #C0C0C0"                            ((Px $b ($bx + 30) ($by +
 Check "bar background #808080 right of the buttons"    ((Px $b ($W - 30) ($by + 10)) -eq "808080") (Px $b ($W - 30) ($by + 10))
 $rule = [TtIn]::GetDlgItem($run.Main, 0x703); $rr = New-Object TtW+RECT; [TtW]::GetWindowRect($rule, [ref]$rr) | Out-Null
 Check "band rule solid black"                          ((Px $b 300 ($rr.T - $wr.T)) -eq "000000") (Px $b 300 ($rr.T - $wr.T))
+# 4 px sizable frame, as the real one: black, gray, gray, black, then the client
+$fr4 = (0..4 | ForEach-Object { Px $b $_ 300 }) -join " "
+Check "sizable frame is 4 px: black gray gray black | client (real main window)" ($fr4 -eq "000000 C0C0C0 C0C0C0 000000 FFFFFF") $fr4
+$frR = (($W - 5)..($W - 1) | ForEach-Object { Px $b $_ 300 }) -join " "
+Check "right edge mirrored"                            ($frR -eq "FFFFFF 000000 C0C0C0 C0C0C0 000000") $frR
 $b.Dispose()
+# the slim frame still resizes: a REAL drag of the right edge by 40 px
+$x0 = $wr.R - 2; $y0 = $wr.T + 300
+Assert-Monitor2 $x0 $y0; Assert-Monitor2 ($x0 + 40) $y0
+[TtIn]::SetCursorPos($x0, $y0) | Out-Null; Start-Sleep -Milliseconds 150
+[TtIn]::mouse_event(2,0,0,0,[IntPtr]::Zero); Start-Sleep -Milliseconds 150
+for ($i = 1; $i -le 8; $i++) { [TtIn]::SetCursorPos($x0 + 5 * $i, $y0) | Out-Null; Start-Sleep -Milliseconds 40 }
+[TtIn]::mouse_event(4,0,0,0,[IntPtr]::Zero); Start-Sleep -Milliseconds 400
+$wr2 = New-Object TtW+RECT; [TtW]::GetWindowRect($run.Main, [ref]$wr2) | Out-Null
+Check "drag on the 4 px right edge resizes (+40 px)" (($wr2.R - $wr2.L) - ($wr.R - $wr.L) -ge 36) ("{0} -> {1}" -f ($wr.R - $wr.L), ($wr2.R - $wr2.L))
+[TtW]::GetWindowRect($run.Main, [ref]$wr) | Out-Null; $W = $wr.R - $wr.L
 
 "Dialogs:"
 Send-TtwKeys "{ALT+s}{WAIT:900}"
