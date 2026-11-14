@@ -19,7 +19,9 @@ Reports live with the consumer, Navigator, in `..\mgt-unicorn-suite\docs\`.
   TELETEXT.HLP (Navigator's help) + TTWINHLP.HLP (our How to Use Help);
   HC headless on a private desktop (test/hc_headless.ps1); help sources ->
   tools/hlpsrc.py + build_hlp.ps1; viewer 0.3.0.0 (HELP_PARTIALKEY, caption
-  = TITLE, key closes popup); gate_teletext; open items s8.
+  = TITLE, key closes popup); gate_teletext; open items s8. s10: inactive
+  dialog band WHITE (3.1 default title colours; the VM's grey is its custom
+  scheme "The Blues"), Help on the caller's monitor at first start.
 
 ## Rules for this repo
 
