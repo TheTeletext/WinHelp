@@ -1503,11 +1503,20 @@ static BOOL HLPFILE_BrowseParagraph(HLPFILE_PAGE* page, struct RtfData* rd,
             textsize = strlen(text);
             if (textsize)
             {
+                /* TELETEXT PORT (phase 2a, gap 5): WinHelp 3.10 draws a
+                 * hotspot in its FONT's colour, underlined (solid for a
+                 * jump, dotted for a popup); it does not force green. In the
+                 * WfW 3.11 VM Microsoft's own WINHELP.HLP and our TTTEST.HLP
+                 * show black jumps (font colour 0x000000 / 0x000101) and
+                 * Chameleon's are green only because its authors coloured
+                 * the link fonts green (0x008000). Wine added \cf1 (green).
+                 * TTWINHLP_GREEN=1 restores Wine's colour, for comparison. */
                 if (rd->force_color)
                 {
+                    BOOL green = getenv("TTWINHLP_GREEN") != NULL;
                     if ((rd->current_link->cookie == hlp_link_popup) ?
-                        !HLPFILE_RtfAddControl(rd, "{\\uld\\cf1") :
-                        !HLPFILE_RtfAddControl(rd, "{\\ul\\cf1")) goto done;
+                        !HLPFILE_RtfAddControl(rd, green ? "{\\uld\\cf1" : "{\\uld") :
+                        !HLPFILE_RtfAddControl(rd, green ? "{\\ul\\cf1" : "{\\ul")) goto done;
                 }
                 if (!HLPFILE_RtfAddText(rd, text)) goto done;
                 if (rd->force_color && !HLPFILE_RtfAddControl(rd, "}")) goto done;
@@ -1690,7 +1699,7 @@ static BOOL HLPFILE_BrowseParagraph(HLPFILE_PAGE* page, struct RtfData* rd,
 
             case 0xE0:
             case 0xE1:
-                WINE_WARN("jump topic 1 => %u\n", GET_UINT(format, 1));
+                WINE_WARN("jump topic 1 => %u (op %02x)\n", GET_UINT(format, 1), *format);   /* TELETEXT PORT: opcode traced */
                 HLPFILE_AllocLink(rd, (*format & 1) ? hlp_link_link : hlp_link_popup,
                                   page->file->lpszPath, -1, GET_UINT(format, 1), TRUE, FALSE, -1);
 
@@ -1702,7 +1711,7 @@ static BOOL HLPFILE_BrowseParagraph(HLPFILE_PAGE* page, struct RtfData* rd,
 	    case 0xE3:
             case 0xE6:
             case 0xE7:
-                WINE_WARN("jump topic 1 => %u\n", GET_UINT(format, 1));
+                WINE_WARN("jump topic 1 => %u (op %02x)\n", GET_UINT(format, 1), *format);   /* TELETEXT PORT: opcode traced */
                 HLPFILE_AllocLink(rd, (*format & 1) ? hlp_link_link : hlp_link_popup,
                                   page->file->lpszPath, -1, GET_UINT(format, 1),
                                   !(*format & 4), FALSE, -1);
@@ -1766,6 +1775,21 @@ done:
  */
 BOOL    HLPFILE_BrowsePage(HLPFILE_PAGE* page, struct RtfData* rd,
                            unsigned font_scale, unsigned relative)
+{
+    return HLPFILE_BrowsePageRegion(page, rd, font_scale, relative, TT_REGION_ALL);
+}
+
+/* TELETEXT PORT (phase 2a, gap 2): HLPFILE_BrowsePage with a region
+ * selector, so the viewer can stream the non-scrolling region (\keepn) and
+ * the scrolling region into two RichEdit controls, as WinHelp 3.1 drew
+ * them. TT_REGION_ALL is Wine's original behaviour, unchanged. */
+static void tt_free_links(HLPFILE_LINK *l)
+{
+    while (l) { HLPFILE_LINK *n = l->next; free(l); l = n; }
+}
+
+BOOL    HLPFILE_BrowsePageRegion(HLPFILE_PAGE* page, struct RtfData* rd,
+                                 unsigned font_scale, unsigned relative, int region)
 {
     HLPFILE     *hlpfile = page->file;
     BYTE        *buf, *end;
@@ -1886,6 +1910,26 @@ BOOL    HLPFILE_BrowsePage(HLPFILE_PAGE* page, struct RtfData* rd,
         case HLP_DISPLAY30:
         case HLP_DISPLAY:
         case HLP_TABLE:
+            /* TELETEXT PORT: region filter. ref is this paragraph's own
+             * TOPICPOS; positions grow through the topic. */
+            if (region != TT_REGION_ALL && page->tt_has_nsr)
+            {
+                BOOL in_nsr = page->tt_scroll_ref == 0xFFFFFFFF || ref < page->tt_scroll_ref;
+                if ((region == TT_REGION_NSR) != in_nsr)
+                {
+                    /* a skipped paragraph still counts toward the in-topic
+                     * character offsets that jumps ("relative") use */
+                    if (buf[0x14] == HLP_DISPLAY || buf[0x14] == HLP_TABLE)
+                    {
+                        const BYTE *format = buf + 0x15;
+                        fetch_long(&format);
+                        offs += fetch_ushort(&format);
+                    }
+                    break;
+                }
+            }
+            else if (region == TT_REGION_NSR)
+                break;   /* no region in this topic: nothing to emit */
             if (!HLPFILE_BrowseParagraph(page, rd, buf, end, &parlen)) return FALSE;
             if (relative > index * 0x8000 + offs)
                 rd->char_pos_rel = rd->char_pos;
@@ -1904,7 +1948,18 @@ BOOL    HLPFILE_BrowsePage(HLPFILE_PAGE* page, struct RtfData* rd,
             ref = GET_UINT(buf, 0xc);
     } while (ref != 0xffffffff);
 done:
-    page->first_link = rd->first_link;
+    /* TELETEXT PORT: a re-browse (font size, window reuse) used to drop
+     * the previous list without freeing it; the NSR keeps its own list. */
+    if (region == TT_REGION_NSR)
+    {
+        tt_free_links(page->tt_first_link_nsr);
+        page->tt_first_link_nsr = rd->first_link;
+    }
+    else
+    {
+        if (page->first_link != rd->first_link) tt_free_links(page->first_link);
+        page->first_link = rd->first_link;
+    }
     return HLPFILE_RtfAddControl(rd, "}");
 }
 
@@ -2645,6 +2700,19 @@ static BOOL HLPFILE_AddPage(HLPFILE *hlpfile, const BYTE *buf, const BYTE *end, 
 
     page->browse_bwd = GET_UINT(buf, 0x19);
     page->browse_fwd = GET_UINT(buf, 0x1D);
+
+    /* TELETEXT PORT (phase 2a, gap 2): WinHelp 3.1 TOPICHEADER also holds
+     * NonScroll (0x25) and Scroll (0x29), the TOPICPOS of the first
+     * paragraph of each region, -1 when absent. 3.0 files have no region. */
+    page->tt_first_link_nsr = NULL;
+    page->tt_has_nsr = FALSE;
+    page->tt_scroll_ref = 0xFFFFFFFF;
+    if (hlpfile->version > 16 && datalen >= 0x2D)
+    {
+        DWORD nsr = GET_UINT(buf, 0x25);
+        page->tt_has_nsr = (nsr != 0xFFFFFFFF);
+        page->tt_scroll_ref = GET_UINT(buf, 0x29);
+    }
 
     if (hlpfile->version <= 16)
     {

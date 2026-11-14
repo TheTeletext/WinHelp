@@ -25,37 +25,35 @@
 
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 
+/* TELETEXT PORT (phase 2a, gap 3): the WinHelp 3.1 menu bar, item for
+ * item as WINHELP.EXE 3.10 shows it in the WfW 3.11 VM (real_menu_*.png):
+ * File Edit Bookmark Help, no Options menu (History is a button there; the
+ * font sizes stay on the right-click menu; Always on Top is under Help).
+ * F1 still runs How to Use Help (MAIN_ACCEL) but, as in 3.1, the menu does
+ * not show it. */
 MAIN_MENU MENU
 {
  POPUP "&File" {
   MENUITEM "&Open...", MNID_FILE_OPEN
   MENUITEM SEPARATOR
-  MENUITEM "&Print...", MNID_FILE_PRINT
-  MENUITEM "Printer &setup...", MNID_FILE_SETUP
+  MENUITEM "&Print Topic", MNID_FILE_PRINT
+  MENUITEM "P&rint Setup...", MNID_FILE_SETUP
    MENUITEM SEPARATOR
   MENUITEM "E&xit", MNID_FILE_EXIT
  }
  POPUP "&Edit" {
-   MENUITEM "&Copy", MNID_EDIT_COPYDLG
+   MENUITEM "&Copy...", MNID_EDIT_COPYDLG
    MENUITEM SEPARATOR
    MENUITEM "&Annotate...", MNID_EDIT_ANNOTATE
  }
- POPUP "&Bookmark" {
+ POPUP "Book&mark" {
    MENUITEM "&Define...", MNID_BKMK_DEFINE
  }
- POPUP "&Options" {
-  MENUITEM "Always on &top", MNID_HELP_HELPTOP
-  MENUITEM "History",		MNID_OPTS_HISTORY
-  POPUP    "Fonts"
-  BEGIN
-    MENUITEM "Small",		MNID_OPTS_FONTS_SMALL
-    MENUITEM "Normal",    	MNID_OPTS_FONTS_NORMAL
-    MENUITEM "Large",     	MNID_OPTS_FONTS_LARGE
-  END
- }
  POPUP "&Help" {
-   MENUITEM "&Help on help\tF1", MNID_HELP_HELPON
-   MENUITEM "&About Wine Help", MNID_HELP_ABOUT
+   MENUITEM "&How to Use Help", MNID_HELP_HELPON
+   MENUITEM "Always on &Top", MNID_HELP_HELPTOP
+   MENUITEM SEPARATOR
+   MENUITEM "&About Help...", MNID_HELP_ABOUT
  }
 }
 
@@ -77,14 +75,15 @@ END
 
 STRINGTABLE
 {
-STID_WINE_HELP, 	"Wine Help"
+STID_WINE_HELP, 	"The Teletext WinHelp"  /* TELETEXT PORT: product name (was "Wine Help") */
 STID_WHERROR, 		"ERROR"
 STID_WARNING,  		"WARNING"
 STID_INFO,  		"Information"
 STID_NOT_IMPLEMENTED, 	"Not yet implemented"
 STID_HLPFILE_ERROR_s, 	"Error while reading the help file `%s'"
-STID_INDEX, 		"&Index"
-STID_CONTENTS,		"Summary"
+STID_INDEX, 		"&Search"      /* TELETEXT PORT: WinHelp 3.1 labels (were "&Index", "Summary") */
+STID_CONTENTS,		"&Contents"
+STID_TT_HISTORY,	"His&tory"     /* TELETEXT PORT: the 3.1 History button */
 STID_BACK, 		"&Back"
 STID_ALL_FILES, 	"All files (*.*)"
 STID_HELP_FILES_HLP, 	"Help files (*.hlp)"
@@ -92,7 +91,6 @@ STID_FILE_NOT_FOUND_s	"Cannot find '%s'. Do you want to find this file yourself?
 STID_NO_RICHEDIT	"Cannot find a richedit implementation... Aborting"
 STID_PSH_INDEX,		"Help topics: "
 STID_TT_CLOSE,		"Close"     /* TELETEXT PORT: Search's Cancel after Show Topics */
-STID_TT_SEARCH,		"&Search"   /* TELETEXT PORT: WinHelp 3.1 button label */
 }
 
 /* TELETEXT PORT (phase 2a): the WinHelp 3.1 Search dialog, as WINHELP.EXE
@@ -113,6 +111,30 @@ FONT 8, "MS Sans Serif"
     LTEXT         "Select a &topic, then choose Go To.", IDC_TTS_PROMPT2, 4, 106, 180, 9
     PUSHBUTTON    "&Go To", IDC_TTS_GOTO, 190, 102, 62, 14
     LISTBOX       IDC_TTS_TOPICS, 4, 120, 250, 60, LBS_NOTIFY | LBS_SORT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+}
+
+/* TELETEXT PORT (phase 2a, gap 3): "About Help", in the layout of WinHelp
+ * 3.1's own About box (real_about.png: icon left, lines of text, rules,
+ * OK top right) instead of Windows' ShellAbout. It carries the credits the
+ * LGPL asks for (phase 1 report s8, item 4): the Wine project, the licence
+ * and where the source is. ttabout.c makes the font bold and the box
+ * white, as Windows 3.1 drew dialogs. */
+IDD_TT_ABOUT DIALOG 0, 0, 262, 170
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About Help"
+FONT 8, "MS Sans Serif"
+{
+    ICON          IDI_WINHELP, IDC_TTA_ICON, 10, 12, 21, 20
+    LTEXT         "The Teletext WinHelp", -1, 52, 10, 140, 9
+    LTEXT         "Version 0.2 (phase 2a, 2026-11-13)", -1, 52, 20, 150, 9
+    LTEXT         "Copyright \251 2026 The Teletext", -1, 52, 30, 150, 9
+    LTEXT         "Reads Windows 3.0 and 3.1 help files", -1, 52, 40, 160, 9
+    DEFPUSHBUTTON "OK", IDOK, 200, 8, 52, 15
+    CONTROL       "", IDC_TTA_RULE1, "Static", SS_OWNERDRAW, 52, 54, 200, 1
+    LTEXT         "Based on Wine's WinHelp viewer (winhlp32),\nCopyright \251 1996-2010 Ulrich Schmid, Eric Pouech,\nSylvain Petreolle, Ken Belleau, Kirill K. Smirnov\nand the other Wine project authors.", -1, 52, 60, 205, 38
+    LTEXT         "Free software under the GNU Lesser General Public\nLicense, version 2.1 or later. NO WARRANTY.\nSource: https://github.com/TheTeletext/WinHelp", -1, 52, 102, 205, 28
+    CONTROL       "", IDC_TTA_RULE2, "Static", SS_OWNERDRAW, 52, 134, 200, 1
+    LTEXT         "Windows 3.1 look: Copyright \251 2026 Dimitri\nPapadopoulos (from Teletext Navigator), LGPL.", -1, 52, 140, 205, 20
 }
 
 IDD_INDEX DIALOG 0, 0, 200, 190

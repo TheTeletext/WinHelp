@@ -17,4 +17,7 @@ void TT_RichEditEnablePictures(HWND re);
 struct tagHlpFileFile;
 BOOL TT_SearchDialog(HWND owner, struct tagHlpFileFile *hlpfile, LONG *offset);
 
+/* ttabout.c: About Help (phase 2a, gap 3) */
+void TT_AboutDialog(HWND owner);
+
 #endif

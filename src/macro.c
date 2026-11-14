@@ -28,6 +28,8 @@
 #include "commdlg.h"
 #include "shellapi.h"
 #include "winhelp.h"
+#include "ttport.h"     /* TELETEXT PORT: TT_AboutDialog */
+#include "w31.h"        /* TELETEXT PORT (gap 4): Windows 3.1 chrome */
 
 #include "wine/debug.h"
 
@@ -79,6 +81,7 @@ void CALLBACK MACRO_CreateButton(LPCSTR id, LPCSTR name, LPCSTR macro)
 
     button->next  = 0;
     button->hWnd  = 0;
+    button->tt_disabled = FALSE;   /* TELETEXT PORT */
 
     ptr = (char*)button + sizeof(WINHELP_BUTTON);
 
@@ -115,6 +118,7 @@ void CALLBACK MACRO_DisableButton(LPCSTR id)
     b = MACRO_LookupButton(MACRO_CurrentWindow(), id);
     if (!*b) {WINE_FIXME("Couldn't find button %s\n", debugstr_a(id)); return;}
 
+    (*b)->tt_disabled = TRUE;   /* TELETEXT PORT: kept for a window made later */
     EnableWindow((*b)->hWnd, FALSE);
 }
 
@@ -127,6 +131,7 @@ static void CALLBACK MACRO_EnableButton(LPCSTR id)
     b = MACRO_LookupButton(MACRO_CurrentWindow(), id);
     if (!*b) {WINE_FIXME("Couldn't find button %s\n", debugstr_a(id)); return;}
 
+    (*b)->tt_disabled = FALSE;  /* TELETEXT PORT */
     EnableWindow((*b)->hWnd, TRUE);
 }
 
@@ -160,8 +165,10 @@ void CALLBACK MACRO_About(void)
     WCHAR name[256];
     HICON icon = LoadImageW( Globals.hInstance, MAKEINTRESOURCEW(IDI_WINHELP),
                              IMAGE_ICON, 48, 48, LR_SHARED );
-    LoadStringW( Globals.hInstance, STID_WINE_HELP, name, ARRAY_SIZE( name ));
-    ShellAboutW( MACRO_CurrentWindow()->hMainWnd, name, NULL, icon );
+    /* TELETEXT PORT (gap 3): WinHelp's own About box with the LGPL credits
+     * (ttabout.c), not Windows' ShellAbout (Windows 11 branding). */
+    (void)name; (void)icon;
+    TT_AboutDialog(MACRO_CurrentWindow()->hMainWnd);
 }
 
 static void CALLBACK MACRO_AddAccelerator(LONG u1, LONG u2, LPCSTR str)
@@ -220,11 +227,11 @@ static void CALLBACK MACRO_BrowseButtons(void)
 
     WINE_TRACE("()\n");
 
-    MACRO_CreateButton("BTN_PREV", "&<<", "Prev()");
+    MACRO_CreateButton("BTN_PREVIOUS", "&<<", "Prev()");   /* TELETEXT PORT: 3.1 id btn_previous */
     MACRO_CreateButton("BTN_NEXT", "&>>", "Next()");
 
     if (!HLPFILE_PageByOffset(page->file, page->browse_bwd, &relative))
-        MACRO_DisableButton("BTN_PREV");
+        MACRO_DisableButton("BTN_PREVIOUS");
     if (!HLPFILE_PageByOffset(page->file, page->browse_fwd, &relative))
         MACRO_DisableButton("BTN_NEXT");
 }
@@ -251,6 +258,7 @@ static void CALLBACK MACRO_ChangeButtonBinding(LPCSTR id, LPCSTR macro)
     button->next  = (*b)->next;
     button->hWnd  = (*b)->hWnd;
     button->wParam = (*b)->wParam;
+    button->tt_disabled = (*b)->tt_disabled;   /* TELETEXT PORT */
 
     ptr = (char*)button + sizeof(WINHELP_BUTTON);
 
@@ -527,6 +535,7 @@ void CALLBACK MACRO_History(void)
     {
         HWND hWnd = CreateWindowA(HISTORY_WIN_CLASS_NAME, "History", WS_OVERLAPPEDWINDOW,
                                  0, 0, 0, 0, 0, 0, Globals.hInstance, Globals.active_win);
+        if (hWnd) w31_caption_attach(hWnd);   /* TELETEXT PORT (gap 4): 3.1 title bar */
         ShowWindow(hWnd, SW_NORMAL);
     }
 }
@@ -757,7 +766,7 @@ void CALLBACK MACRO_Print(void)
     printer.hPrintTemplate      = 0;
     printer.hSetupTemplate      = 0;
 
-    if (PrintDlgW(&printer)) {
+    if (W31_UNHOOKED(PrintDlgW(&printer))) {   /* TELETEXT PORT: Windows draws its own common dialog */
         WINE_FIXME("Print()\n");
     }
 }

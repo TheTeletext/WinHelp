@@ -62,6 +62,10 @@
 #define IDC_TTS_GOTO            0x167
 #define IDC_TTS_TOPICS          0x168
 #define STID_TT_CLOSE           0x170
-#define STID_TT_SEARCH          0x171
+#define STID_TT_HISTORY         0x171
+#define IDD_TT_ABOUT            0x180
+#define IDC_TTA_ICON            0x181
+#define IDC_TTA_RULE1           0x182
+#define IDC_TTA_RULE2           0x183
 
 #define IDI_WINHELP             0xF00

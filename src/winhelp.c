@@ -40,6 +40,7 @@
 #include "commctrl.h"
 #include <ole2.h>
 #include "ttport.h"     /* TELETEXT PORT: saved positions, monitor work areas */
+#include "w31.h"        /* TELETEXT PORT (gap 4): Windows 3.1 chrome (from Navigator) */
 
 #include "wine/debug.h"
 
@@ -100,15 +101,74 @@ static DWORD CALLBACK WINHELP_RtfStreamIn(DWORD_PTR cookie, BYTE* buff,
     return 0;
 }
 
+/* TELETEXT PORT (phase 2a, gap 2): the non-scrolling region. WinHelp 3.1
+ * shows the paragraphs marked \keepn in a band under the button bar, with a
+ * 1px black rule below it, and only the rest scrolls (TTTEST.HLP and every
+ * Chameleon topic title in the WfW 3.11 VM). Wine streamed the whole topic
+ * into one RichEdit. Here the band is a second, scrollbar-less RichEdit
+ * (CTL_ID_NSR) sized to its content by EN_REQUESTRESIZE, with its own
+ * hotspot list (page->tt_first_link_nsr); the rule is a 1px black static.
+ * Popups keep the whole topic in one control. */
+#define CTL_ID_NSR      0x702
+#define CTL_ID_RULE     0x703
+/* TELETEXT PORT (gap 2): the RichEdit a mouse message came from (text or band) */
+static int tt_link_ctl = 0x701 /* CTL_ID_TEXT */;
+
+static void TT_SetupNsr(WINHELP_WINDOW* win)
+{
+    static const WCHAR emptyW[1];
+    HWND hNsr = GetDlgItem(win->hMainWnd, CTL_ID_NSR);
+    struct RtfData rd;
+    EDITSTREAM es;
+    RECT rc;
+
+    win->tt_nsr_on = FALSE;
+    if (!hNsr) return;
+    if (getenv("TTWINHLP_NO_NSR")) { ShowWindow(hNsr, SW_HIDE); return; }  /* diagnosis: Wine's one-control view */
+    SendMessageW(hNsr, WM_SETREDRAW, FALSE, 0);
+    SendMessageW(hNsr, WM_SETTEXT, 0, (LPARAM)emptyW);
+    if (win->page && win->page->tt_has_nsr)
+    {
+        /* wrap at the window width before asking for the height */
+        GetClientRect(win->hMainWnd, &rc);
+        SetWindowPos(hNsr, NULL, 0, 0, rc.right - rc.left, win->tt_nsr_h ? win->tt_nsr_h : 1,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        SendMessageW(hNsr, EM_SETBKGNDCOLOR, 0, (LPARAM)win->info->nsr_color);
+        SendMessageW(hNsr, EM_SETTARGETDEVICE, 0, 0);
+        if (HLPFILE_BrowsePageRegion(win->page, &rd, win->font_scale, 0, TT_REGION_NSR))
+        {
+            rd.where = rd.data;
+            es.dwCookie = (DWORD_PTR)&rd;
+            es.dwError = 0;
+            es.pfnCallback = WINHELP_RtfStreamIn;
+            SendMessageW(hNsr, EM_STREAMIN, SF_RTF, (LPARAM)&es);
+            win->tt_nsr_on = TRUE;
+        }
+        free(rd.data);
+    }
+    SendMessageW(hNsr, WM_SETREDRAW, TRUE, 0);
+    ShowWindow(hNsr, win->tt_nsr_on ? SW_SHOWNA : SW_HIDE);
+    ShowWindow(GetDlgItem(win->hMainWnd, CTL_ID_RULE), win->tt_nsr_on ? SW_SHOWNA : SW_HIDE);
+    if (win->tt_nsr_on)
+    {
+        SendMessageW(hNsr, EM_REQUESTRESIZE, 0, 0);   /* -> EN_REQUESTRESIZE: tt_nsr_h */
+        RedrawWindow(hNsr, NULL, NULL, RDW_INVALIDATE | RDW_ERASE);
+    }
+}
+
 static void WINHELP_SetupText(HWND hTextWnd, WINHELP_WINDOW* win, ULONG relative)
 {
     static const WCHAR emptyW[1];
+    int region;
     /* At first clear area - needed by EM_POSFROMCHAR/EM_SETSCROLLPOS */
     SendMessageW(hTextWnd, WM_SETTEXT, 0, (LPARAM)emptyW);
     SendMessageW(hTextWnd, WM_SETREDRAW, FALSE, 0);
     SendMessageW(hTextWnd, EM_SETBKGNDCOLOR, 0, (LPARAM)win->info->sr_color);
     /* set word-wrap to window size (undocumented) */
     SendMessageW(hTextWnd, EM_SETTARGETDEVICE, 0, 0);
+    /* TELETEXT PORT: band first, then the scrolling region only */
+    TT_SetupNsr(win);
+    region = win->tt_nsr_on ? TT_REGION_SCROLL : TT_REGION_ALL;
     if (win->page)
     {
         struct RtfData  rd;
@@ -118,7 +178,7 @@ static void WINHELP_SetupText(HWND hTextWnd, WINHELP_WINDOW* win, ULONG relative
         POINT           pt;
 
 
-        if (HLPFILE_BrowsePage(win->page, &rd, win->font_scale, relative))
+        if (HLPFILE_BrowsePageRegion(win->page, &rd, win->font_scale, relative, region))
         {
             rd.where = rd.data;
             es.dwCookie = (DWORD_PTR)&rd;
@@ -133,9 +193,33 @@ static void WINHELP_SetupText(HWND hTextWnd, WINHELP_WINDOW* win, ULONG relative
         SendMessageW(hTextWnd, EM_POSFROMCHAR, (WPARAM)&ptl, cp ? cp - 1 : 0);
         pt.x = 0; pt.y = ptl.y;
         SendMessageW(hTextWnd, EM_SETSCROLLPOS, 0, (LPARAM)&pt);
+        WINE_TRACE("TT SetupText relative=%lx cp=%u y=%ld\n", relative, cp, ptl.y);
     }
     SendMessageW(hTextWnd, WM_SETREDRAW, TRUE, 0);
     RedrawWindow(hTextWnd, NULL, NULL, RDW_FRAME|RDW_INVALIDATE);
+}
+
+/* TELETEXT PORT: an in-topic jump (same topic, another position): scroll
+ * the text already shown instead of rebuilding it (and the band), which a
+ * click inside the band itself must not do. The RTF is regenerated only to
+ * find the character at that position, exactly as WINHELP_SetupText does. */
+static void TT_ScrollToRelative(WINHELP_WINDOW* win, ULONG relative)
+{
+    HWND hText = GetDlgItem(win->hMainWnd, CTL_ID_TEXT);
+    struct RtfData rd;
+    POINTL ptl;
+    POINT cur, pt;
+    unsigned cp = 0;
+
+    if (!hText || !win->page) return;
+    if (HLPFILE_BrowsePageRegion(win->page, &rd, win->font_scale, relative,
+                                 win->tt_nsr_on ? TT_REGION_SCROLL : TT_REGION_ALL))
+        cp = rd.char_pos_rel;
+    free(rd.data);
+    SendMessageW(hText, EM_GETSCROLLPOS, 0, (LPARAM)&cur);
+    SendMessageW(hText, EM_POSFROMCHAR, (WPARAM)&ptl, cp ? cp - 1 : 0);
+    pt.x = 0; pt.y = cur.y + ptl.y;      /* POSFROMCHAR is relative to the view */
+    SendMessageW(hText, EM_SETSCROLLPOS, 0, (LPARAM)&pt);
 }
 
 /***********************************************************************
@@ -186,7 +270,7 @@ BOOL WINHELP_GetOpenFileName(LPSTR lpszFile, int len)
     openfilename.lpfnHook          = 0;
     openfilename.lpTemplateName    = 0;
 
-    return GetOpenFileNameA(&openfilename);
+    return W31_UNHOOKED(GetOpenFileNameA(&openfilename));   /* TELETEXT PORT: common dialog left to Windows */
 }
 
 /***********************************************************************
@@ -381,6 +465,147 @@ static void TT_PlaceWindow(const HLPFILE_WINDOWINFO *wi, BOOL primary,
     if (pos->y + size->cy > wa.bottom) pos->y = max(wa.top, wa.bottom - size->cy);
 }
 
+/* TELETEXT PORT (phase 2a, gap 5): popup fidelity. Measured on the real
+ * WINHELP.EXE 3.10 (VM, pixel scans of shot_real_tt_popup and the Chameleon
+ * glossary popup): outer box sized to the text, at most 448..487 px wide
+ * (two samples; 480 used), 2 px black border, text inset ~10 px left and
+ * right and ~4 px top and bottom, centred on the click with its top ~9 px
+ * below it, kept 2 px inside the screen; and a drop shadow: the popup's
+ * rectangle offset 12,12, a 50% black stipple over whatever is behind,
+ * outside the popup only. Wine: half the parent's width, a 1px Windows
+ * border, no shadow. */
+#define TT_POPUP_MAXW    480
+#define TT_POP_BORDER    2
+#define TT_POP_PADX      10
+#define TT_POP_PADY      4
+#define TT_POP_SHADOW    12
+static POINT tt_popup_click;
+static const char TT_SHADOW_CLASS[] = "TTWinHelpShadow";
+
+static BOOL tt_is_popup(const WINHELP_WINDOW* win)
+{
+    return win && win == Globals.active_popup && win->hMainWnd &&
+           !(GetWindowLongA(win->hMainWnd, GWL_STYLE) & WS_CAPTION);
+}
+
+/* the 50% stipple: black dots on white, white keyed out (layered window) */
+static LRESULT CALLBACK TT_ShadowWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_PAINT)
+    {
+        static const WORD bits[8] = { 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA };
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        HBITMAP pat = CreateBitmap(8, 8, 1, 1, bits);
+        HBRUSH br = CreatePatternBrush(pat);
+        RECT rc;
+        GetClientRect(h, &rc);
+        SetTextColor(dc, RGB(255, 255, 255));   /* 1 bits */
+        SetBkColor(dc, RGB(0, 0, 0));           /* 0 bits */
+        SetBrushOrgEx(dc, 0, 0, NULL);
+        FillRect(dc, &rc, br);
+        DeleteObject(br);
+        DeleteObject(pat);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    if (msg == WM_NCHITTEST) return HTTRANSPARENT;
+    return DefWindowProcA(h, msg, wp, lp);
+}
+
+static void TT_PlaceShadow(WINHELP_WINDOW* win)
+{
+    RECT r;
+    HRGN all, hole;
+    int w, h;
+    if (!win->tt_shadow || !win->hMainWnd) return;
+    GetWindowRect(win->hMainWnd, &r);
+    w = r.right - r.left; h = r.bottom - r.top;
+    SetWindowPos(win->tt_shadow, win->hMainWnd, r.left + TT_POP_SHADOW, r.top + TT_POP_SHADOW,
+                 w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    /* only the part outside the popup: an L along the right and bottom */
+    all = CreateRectRgn(0, 0, w, h);
+    hole = CreateRectRgn(0, 0, w - TT_POP_SHADOW, h - TT_POP_SHADOW);
+    CombineRgn(all, all, hole, RGN_DIFF);
+    DeleteObject(hole);
+    SetWindowRgn(win->tt_shadow, all, TRUE);   /* the system owns the region now */
+}
+
+static void TT_CreateShadow(WINHELP_WINDOW* win)
+{
+    if (getenv("TTWINHLP_NOSHADOW")) return;
+    win->tt_shadow = CreateWindowExA(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                                     TT_SHADOW_CLASS, "", WS_POPUP,
+                                     0, 0, 0, 0, win->hMainWnd, NULL, Globals.hInstance, NULL);
+    if (win->tt_shadow)
+    {
+        SetLayeredWindowAttributes(win->tt_shadow, RGB(255, 255, 255), 0, LWA_COLORKEY);
+        TT_PlaceShadow(win);
+    }
+}
+
+/* Shrink the popup to its widest line when nothing wrapped, then centre it
+ * on the click and keep it 2 px inside the work area. */
+static void TT_FitPopup(WINHELP_WINDOW* win)
+{
+    HWND hText = GetDlgItem(win->hMainWnd, CTL_ID_TEXT);
+    RECT wr, wa, tr;
+    int lines, i, widest = 0, w, x;
+    BOOL wrapped = FALSE;
+
+    if (!hText) return;
+    /* the popup is born 10 px tall: an empty format rectangle makes
+     * RichEdit wrap at every character. Format at full width and a working
+     * height first; EN_REQUESTRESIZE sets the real height afterwards. */
+    GetWindowRect(win->hMainWnd, &wr);
+    SetWindowPos(win->hMainWnd, NULL, 0, 0, wr.right - wr.left, 400,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    WINHELP_LayoutMainWindow(win);
+    GetClientRect(hText, &tr);
+    lines = (int)SendMessageW(hText, EM_GETLINECOUNT, 0, 0);
+    WINE_TRACE("TT fit: %d lines, text window %ldx%ld\n", lines, tr.right, tr.bottom);
+    for (i = 0; i < lines; i++)
+    {
+        int idx = (int)SendMessageW(hText, EM_LINEINDEX, i, 0);
+        int next = (i + 1 < lines) ? (int)SendMessageW(hText, EM_LINEINDEX, i + 1, 0)
+                                   : (int)SendMessageW(hText, WM_GETTEXTLENGTH, 0, 0) + 1;
+        WCHAR last[2] = { 0, 0 };
+        TEXTRANGEW tr2;
+        POINTL p;
+        if (next - 1 <= idx) continue;                    /* empty line */
+        /* the line's last character: a paragraph or line break ends it;
+         * anything else means RichEdit wrapped it */
+        tr2.chrg.cpMin = next - 1; tr2.chrg.cpMax = next;
+        tr2.lpstrText = last;
+        SendMessageW(hText, EM_GETTEXTRANGE, 0, (LPARAM)&tr2);
+        /* x of the line's last character: a break or the space RichEdit
+         * wrapped at sits right where the text ends (the real WinHelp
+         * shrinks a wrapped popup to its widest line too: the Chameleon
+         * glossary's "access" is 436 px, not its maximum) */
+        SendMessageW(hText, EM_POSFROMCHAR, (WPARAM)&p, next - 1);
+        if (i + 1 < lines && last[0] != '\r' && last[0] != '\v' && last[0] != '\n' && last[0] != ' ')
+        {
+            wrapped = TRUE;          /* broken inside a word: assume full width */
+            break;
+        }
+        WINE_TRACE("TT fit: line %d [%d..%d) end.x %ld\n", i, idx, next, p.x);
+        if (p.x > widest) widest = p.x;
+    }
+    GetWindowRect(win->hMainWnd, &wr);
+    w = wr.right - wr.left;
+    if (!wrapped && widest > 0)
+    {
+        int want = widest + 2 + 2 * (TT_POP_BORDER + TT_POP_PADX);
+        if (want < w) w = want;
+    }
+    TT_WorkAreaFromWindow(Globals.active_win ? Globals.active_win->hMainWnd : win->hMainWnd, &wa);
+    x = tt_popup_click.x - w / 2;
+    if (x + w > wa.right - 2) x = wa.right - 2 - w;
+    if (x < wa.left + 2) x = wa.left + 2;
+    SetWindowPos(win->hMainWnd, NULL, x, wr.top, w, wr.bottom - wr.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    WINHELP_LayoutMainWindow(win);
+}
+
 /******************************************************************
  *		HLPFILE_GetPopupWindowInfo
  *
@@ -401,7 +626,22 @@ HLPFILE_WINDOWINFO* WINHELP_GetPopupWindowInfo(HLPFILE* hlpfile, WINHELP_WINDOW*
 
     wi.origin.x = (short)LOWORD(mouse);
     wi.origin.y = (short)HIWORD(mouse);
-    ClientToScreen(parent->hMainWnd, &wi.origin);
+    /* TELETEXT PORT: the point is in the coordinates of the RichEdit that
+     * reported the click (text or band), not of the main window (Wine put
+     * the popup one button bar too high). */
+    {
+        HWND src = GetDlgItem(parent->hMainWnd, tt_link_ctl);
+        ClientToScreen(src ? src : parent->hMainWnd, &wi.origin);
+    }
+    /* TELETEXT PORT (phase 2a, gap 5): WinHelp 3.10's popup (measured in
+     * the VM, TTTEST "modem" and the Chameleon glossary): wrapped at most
+     * TT_POPUP_MAXW wide, then shrunk to its widest line (TT_FitPopup),
+     * centred on the click, its top ~9 px below it, 2 px black border, no
+     * Windows frame. Wine: half the parent's width, top at the click. */
+    wi.size.cx = TT_POPUP_MAXW;
+    tt_popup_click = wi.origin;
+    WINE_TRACE("TT popup: mouse %d,%d -> screen %ld,%ld\n", (short)LOWORD(mouse), (short)HIWORD(mouse), wi.origin.x, wi.origin.y);
+    wi.origin.y += 9;
     wi.origin.x -= wi.size.cx / 2;
     /* TELETEXT PORT: clamp to the parent's monitor, not to 0..SM_CXSCREEN
      * (the primary monitor only); see ttport.c. */
@@ -413,7 +653,7 @@ HLPFILE_WINDOWINFO* WINHELP_GetPopupWindowInfo(HLPFILE* hlpfile, WINHELP_WINDOW*
     }
 
     wi.style = SW_SHOW;
-    wi.win_style = WS_POPUP | WS_BORDER;
+    wi.win_style = WS_POPUP;   /* TELETEXT PORT: was | WS_BORDER; the 2 px border is drawn (WM_ERASEBKGND) */
     if (hlpfile->has_popup_color)
         wi.sr_color = hlpfile->popup_color;
     else if (parent->page && parent->page->file->has_popup_color)
@@ -546,6 +786,30 @@ void            WINHELP_LayoutMainWindow(WINHELP_WINDOW* win)
     if (GetWindowRect(hButtonBoxWnd, &button_box_rect))
         text_top = rect.top + button_box_rect.bottom - button_box_rect.top;
 
+    /* TELETEXT PORT (gap 2): the non-scrolling band and its rule */
+    if (win->tt_nsr_on && GetDlgItem(win->hMainWnd, CTL_ID_NSR))
+    {
+        int h = win->tt_nsr_h > 0 ? win->tt_nsr_h : 0;
+        int maxh = (rect.bottom - text_top) / 2;     /* never eat the whole window */
+        if (h > maxh) h = maxh;
+        SetWindowPos(GetDlgItem(win->hMainWnd, CTL_ID_NSR), HWND_TOP,
+                     rect.left, text_top, rect.right - rect.left, h, SWP_NOACTIVATE);
+        SetWindowPos(GetDlgItem(win->hMainWnd, CTL_ID_RULE), HWND_TOP,
+                     rect.left, text_top + h, rect.right - rect.left, 1, SWP_NOACTIVATE);
+        text_top += h + 1;
+        /* a new width can rewrap the band: ask again (the handler relayouts
+         * only when the height really changes) */
+        SendMessageW(GetDlgItem(win->hMainWnd, CTL_ID_NSR), EM_REQUESTRESIZE, 0, 0);
+    }
+
+    /* TELETEXT PORT (gap 5): a popup's text sits inside its 2 px border
+     * and the WinHelp 3.1 padding */
+    if (tt_is_popup(win))
+    {
+        InflateRect(&rect, -(TT_POP_BORDER + TT_POP_PADX), -(TT_POP_BORDER + TT_POP_PADY));
+        text_top = rect.top;
+    }
+
     SetWindowPos(hTextWnd, HWND_TOP,
                  rect.left, text_top,
                  rect.right - rect.left,
@@ -601,6 +865,13 @@ static void WINHELP_DeletePageLinks(HLPFILE_PAGE* page)
         next = curr->next;
         free(curr);
     }
+    /* TELETEXT PORT (gap 2): the band's hotspots */
+    for (curr = page->tt_first_link_nsr; curr; curr = next)
+    {
+        next = curr->next;
+        free(curr);
+    }
+    page->tt_first_link_nsr = NULL;
     /* TELETEXT PORT: Wine left the freed list on the page. Two windows can
      * show the same page (TUTORIAL.HLP: main and "tutorial"), so closing
      * the second freed it again (double free, crash on exit). Known residue:
@@ -665,9 +936,14 @@ static void WINHELP_DeleteWindow(WINHELP_WINDOW* win)
 
     if (win == Globals.active_popup)
         Globals.active_popup = NULL;
+    if (win->tt_shadow) { DestroyWindow(win->tt_shadow); win->tt_shadow = NULL; }   /* TELETEXT PORT (gap 5) */
 
     hTextWnd = GetDlgItem(win->hMainWnd, CTL_ID_TEXT);
     SetWindowLongPtrA(hTextWnd, GWLP_WNDPROC, (LONG_PTR)win->origRicheditWndProc);
+    /* TELETEXT PORT (gap 2): same for the band, before win is freed */
+    if (GetDlgItem(win->hMainWnd, CTL_ID_NSR))
+        SetWindowLongPtrA(GetDlgItem(win->hMainWnd, CTL_ID_NSR), GWLP_WNDPROC,
+                          (LONG_PTR)win->origRicheditWndProc);
 
     WINHELP_DeleteButtons(win);
 
@@ -740,27 +1016,51 @@ static void WINHELP_RememberPage(WINHELP_WINDOW* win, WINHELP_WNDPAGE* wpage)
  *
  *           WINHELP_FindLink
  */
+/* TELETEXT PORT (gap 2): which RichEdit the mouse is over. Wine had one;
+ * the band (CTL_ID_NSR) has its own control and link list. */
+/* (tt_link_ctl is defined with CTL_ID_NSR, above) */
+
 static HLPFILE_LINK* WINHELP_FindLink(WINHELP_WINDOW* win, LPARAM pos)
 {
     HLPFILE_LINK*           link;
     POINTL                  mouse_ptl, char_ptl, char_next_ptl;
     DWORD                   cp;
+    HWND                    hText;
 
     if (!win->page) return NULL;
+    hText = GetDlgItem(win->hMainWnd, tt_link_ctl);
+    if (!hText) return NULL;
 
     mouse_ptl.x = (short)LOWORD(pos);
     mouse_ptl.y = (short)HIWORD(pos);
-    cp = SendMessageW(GetDlgItem(win->hMainWnd, CTL_ID_TEXT), EM_CHARFROMPOS,
+    cp = SendMessageW(hText, EM_CHARFROMPOS,
                       0, (LPARAM)&mouse_ptl);
-
-    for (link = win->page->first_link; link; link = link->next)
+    for (link = (tt_link_ctl == CTL_ID_NSR) ? win->page->tt_first_link_nsr : win->page->first_link;
+         link; link = link->next)
     {
+        /* TELETEXT PORT (gap 2, found on the GLOSHLP A..Z strip): Microsoft's
+         * EM_CHARFROMPOS returns the NEAREST character boundary, so over the
+         * right half of a picture it gives the next cp and a bitmap hotspot
+         * (one picture char, cpMin == cpMax) was missed; Wine's RichEdit
+         * returns the picture itself. Test a bitmap hotspot against its own
+         * picture's position, whatever cp the click mapped to. */
+        if (link->bHotSpot && (cp == link->cpMin + 1) && cp > 0)
+        {
+            HLPFILE_HOTSPOTLINK*    hslink = (HLPFILE_HOTSPOTLINK*)link;
+            SendMessageW(hText, EM_POSFROMCHAR, (LPARAM)&char_ptl, link->cpMin);
+            if (mouse_ptl.x >= char_ptl.x + hslink->x &&
+                mouse_ptl.x <  char_ptl.x + hslink->x + hslink->width &&
+                mouse_ptl.y >= char_ptl.y + hslink->y &&
+                mouse_ptl.y <  char_ptl.y + hslink->y + hslink->height)
+                break;
+            continue;
+        }
         if (link->cpMin <= cp && cp <= link->cpMax)
         {
             /* check whether we're at end of line */
-            SendMessageW(GetDlgItem(win->hMainWnd, CTL_ID_TEXT), EM_POSFROMCHAR,
+            SendMessageW(hText, EM_POSFROMCHAR,
                          (LPARAM)&char_ptl, cp);
-            SendMessageW(GetDlgItem(win->hMainWnd, CTL_ID_TEXT), EM_POSFROMCHAR,
+            SendMessageW(hText, EM_POSFROMCHAR,
                          (LPARAM)&char_next_ptl, cp + 1);
             if (link->bHotSpot)
             {
@@ -793,11 +1093,14 @@ static LRESULT CALLBACK WINHELP_RicheditWndProc(HWND hWnd, UINT msg,
             pt.x = (short)LOWORD(messagePos);
             pt.y = (short)HIWORD(messagePos);
             ScreenToClient(hWnd, &pt);
+            tt_link_ctl = GetDlgCtrlID(hWnd);   /* TELETEXT PORT: band or text */
             if (win->page && WINHELP_FindLink(win, MAKELPARAM(pt.x, pt.y)))
             {
+                tt_link_ctl = CTL_ID_TEXT;
                 SetCursor(win->hHandCur);
                 return 0;
             }
+            tt_link_ctl = CTL_ID_TEXT;
             /* fall through */
         default:
             return CallWindowProcA(win->origRicheditWndProc, hWnd, msg, wParam, lParam);
@@ -830,6 +1133,14 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
                      * jumps to the very same page
                      * Exit gracefully in that case
                      */
+                    /* TELETEXT PORT (found in gap 2 on the Chameleon glossary):
+                     * that early exit also swallowed every jump to a POSITION
+                     * inside the topic on show (GLOSHLP's A..Z letters jump
+                     * to "M" etc. inside the one glossary topic; the real
+                     * WinHelp scrolls there). A jump with an in-topic offset
+                     * now scrolls; offset 0 keeps Wine's early exit. */
+                    if (wpage->relative)
+                        TT_ScrollToRelative(win, wpage->relative);
                     return TRUE;
                 }
                 WINHELP_DeleteButtons(win);
@@ -900,13 +1211,22 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
     {
         CHAR    buffer[MAX_STRING_LEN];
 
+        /* TELETEXT PORT (phase 2a, gap 3): the WinHelp 3.1 button bar,
+         * "Contents Search Back History" (then << >> from BrowseButtons()),
+         * as WINHELP.EXE 3.10 shows it, with the button IDs the Help
+         * Compiler documents (btn_contents, btn_search, btn_back,
+         * btn_history, btn_previous, btn_next): help files address them in
+         * macros (MPLAYER.HLP: ...Button(`btn_s...)). Wine had "Summary",
+         * "Index" (BTN_INDEX), no History button. */
         LoadStringA(Globals.hInstance, STID_CONTENTS, buffer, sizeof(buffer));
         MACRO_CreateButton("BTN_CONTENTS", buffer, "Contents()");
         LoadStringA(Globals.hInstance, STID_INDEX, buffer, sizeof(buffer));
-        MACRO_CreateButton("BTN_INDEX", buffer, "Finder()");
+        MACRO_CreateButton("BTN_SEARCH", buffer, "Search()");
         LoadStringA(Globals.hInstance, STID_BACK, buffer, sizeof(buffer));
         MACRO_CreateButton("BTN_BACK", buffer, "Back()");
         if (win->back.index <= 1) MACRO_DisableButton("BTN_BACK");
+        LoadStringA(Globals.hInstance, STID_TT_HISTORY, buffer, sizeof(buffer));
+        MACRO_CreateButton("BTN_HISTORY", buffer, "History()");
     }
 
     if (!bReUsed)
@@ -924,6 +1244,11 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
                                        bPopup ? Globals.active_win->hMainWnd : NULL,
                                        bPrimary ? LoadMenuW(Globals.hInstance, MAKEINTRESOURCEW(MAIN_MENU)) : 0,
                                        Globals.hInstance, win);
+        /* TELETEXT PORT (phase 2a, gap 4): the Windows 3.1 title bar, frame
+         * and menu bar (w31.c, from Navigator), before the window is shown.
+         * Popups have no caption and keep their own frame (gap 5). */
+        if (!bPopup && win->hMainWnd)
+            w31_caption_attach(win->hMainWnd);
         if (!bPopup)
             /* Create button box and text Window */
             CreateWindowA(BUTTON_BOX_WIN_CLASS_NAME, "", WS_CHILD | WS_VISIBLE,
@@ -942,6 +1267,21 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
                     SendMessageW(hTextWnd, EM_GETEVENTMASK, 0, 0) | ENM_MOUSEEVENTS);
         win->origRicheditWndProc = (WNDPROC)SetWindowLongPtrA(hTextWnd, GWLP_WNDPROC,
                                                              (LONG_PTR)WINHELP_RicheditWndProc);
+        /* TELETEXT PORT (gap 2): the non-scrolling band (hidden until a
+         * topic has one) and the 1px rule under it; not in popups. */
+        if (!bPopup)
+        {
+            HWND hNsr = CreateWindowA(Globals.tt_msftedit ? "RICHEDIT50W" : RICHEDIT_CLASS20A, NULL,
+                                      ES_MULTILINE | ES_READONLY | WS_CHILD,
+                                      0, 0, 0, 0, win->hMainWnd, (HMENU)CTL_ID_NSR, Globals.hInstance, NULL);
+            TT_RichEditEnablePictures(hNsr);
+            SendMessageW(hNsr, EM_SETEDITSTYLE, SES_HIDEGRIDLINES, SES_HIDEGRIDLINES);
+            SendMessageW(hNsr, EM_SETEVENTMASK, 0,
+                         SendMessageW(hNsr, EM_GETEVENTMASK, 0, 0) | ENM_MOUSEEVENTS | ENM_REQUESTRESIZE);
+            SetWindowLongPtrA(hNsr, GWLP_WNDPROC, (LONG_PTR)WINHELP_RicheditWndProc);
+            CreateWindowA("STATIC", "", WS_CHILD | SS_OWNERDRAW,   /* painted black in WM_DRAWITEM: SS_BLACKRECT is #696969 on Windows 11 */
+                          0, 0, 0, 0, win->hMainWnd, (HMENU)CTL_ID_RULE, Globals.hInstance, NULL);
+        }
     }
 
     hIcon = (wpage->page) ? wpage->page->file->hIcon : NULL;
@@ -989,11 +1329,13 @@ BOOL WINHELP_CreateHelpWindow(WINHELP_WNDPAGE* wpage, int nCmdShow, BOOL remembe
         win->font_scale = Globals.active_win->font_scale;
         WINHELP_SetupText(hTextWnd, win, wpage->relative);
 
+        TT_FitPopup(win);   /* TELETEXT PORT (gap 5): width to the text, centred (before it shows) */
         /* we need the window to be shown for richedit to compute the size */
         ShowWindow(win->hMainWnd, nCmdShow);
         SendMessageW(hTextWnd, EM_SETEVENTMASK, 0, mask | ENM_REQUESTRESIZE);
         SendMessageW(hTextWnd, EM_REQUESTRESIZE, 0, 0);
         SendMessageW(hTextWnd, EM_SETEVENTMASK, 0, mask);
+        TT_CreateShadow(win);   /* TELETEXT PORT (gap 5): the 3.1 drop shadow */
     }
     else
     {
@@ -1193,15 +1535,35 @@ static LRESULT CALLBACK WINHELP_ButtonBoxWndProc(HWND hWnd, UINT msg, WPARAM wPa
                         ncm.cbSize = sizeof(NONCLIENTMETRICSW);
                         SystemParametersInfoW(SPI_GETNONCLIENTMETRICS,
                                               sizeof(NONCLIENTMETRICSW), &ncm, 0);
-                        Globals.hButtonFont = CreateFontIndirectW(&ncm.lfMenuFont);
+                        /* TELETEXT PORT (gap 3): WinHelp 3.1's buttons are
+                         * Helv 8 bold = MS Sans Serif 8 bold (the bitmap
+                         * face), not the Windows 11 menu font. */
+                        (void)ncm;
+                        Globals.hButtonFont = CreateFontA(-MulDiv(8, 96, 72), 0, 0, 0, FW_BOLD, 0, 0, 0,
+                                                          ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                                          DEFAULT_QUALITY, VARIABLE_PITCH | FF_SWISS, "MS Sans Serif");
                     }
                     SetWindowLongPtrA(button->hWnd, GWLP_WNDPROC, (LONG_PTR) WINHELP_ButtonWndProc);
+                    if (button->tt_disabled) EnableWindow(button->hWnd, FALSE);   /* TELETEXT PORT */
                     if (Globals.hButtonFont)
                         SendMessageW(button->hWnd, WM_SETFONT, (WPARAM)Globals.hButtonFont, TRUE);
                 }
             }
             hDc = GetDC(button->hWnd);
-            GetTextExtentPointA(hDc, button->lpszName, strlen(button->lpszName), &textsize);
+            /* TELETEXT PORT: measure with the button's own font (Wine
+             * measured with the DC's default font) */
+            {
+                HFONT old = Globals.hButtonFont ? SelectObject(hDc, Globals.hButtonFont) : NULL;
+                char vis[256];
+                const char *q = button->lpszName;
+                int n = 0;
+                /* the '&' marks the mnemonic and is not drawn (Wine counted it) */
+                for (; *q && n < (int)sizeof(vis) - 1; q++)
+                    if (*q != '&' || q[1] == '&') vis[n++] = *q;
+                vis[n] = 0;
+                GetTextExtentPointA(hDc, vis, n, &textsize);
+                if (old) SelectObject(hDc, old);
+            }
             ReleaseDC(button->hWnd, hDc);
 
             button_size.cx = max(button_size.cx, textsize.cx + BUTTON_CX);
@@ -1469,6 +1831,12 @@ static INT_PTR CALLBACK WINHELP_SearchDlgProc(HWND hWnd, UINT msg, WPARAM wParam
  *
  *           WINHELP_MainWndProc
  */
+/* TELETEXT PORT: one character to lower case, the Windows way (ANSI) */
+static char tt_lower(BYTE c)
+{
+    return (char)(BYTE)(ULONG_PTR)CharLowerA((LPSTR)(ULONG_PTR)c);
+}
+
 static LRESULT CALLBACK WINHELP_MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     WINHELP_WINDOW *win;
@@ -1490,6 +1858,77 @@ static LRESULT CALLBACK WINHELP_MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, 
 
     case WM_WINDOWPOSCHANGED:
         WINHELP_LayoutMainWindow((WINHELP_WINDOW*) GetWindowLongPtrW(hWnd, 0));
+        break;
+
+    /* TELETEXT PORT (gap 5): a popup is its background colour inside a 2 px
+     * black border (the real WinHelp's), not a Windows frame */
+    case WM_ERASEBKGND:
+        win = (WINHELP_WINDOW*) GetWindowLongPtrW(hWnd, 0);
+        if (tt_is_popup(win))
+        {
+            RECT rc;
+            HBRUSH bg = CreateSolidBrush(win->info->sr_color);
+            int i;
+            GetClientRect(hWnd, &rc);
+            FillRect((HDC)wParam, &rc, bg);
+            DeleteObject(bg);
+            for (i = 0; i < TT_POP_BORDER; i++)
+            {
+                FrameRect((HDC)wParam, &rc, GetStockObject(BLACK_BRUSH));
+                InflateRect(&rc, -1, -1);
+            }
+            return 1;
+        }
+        break;
+
+    /* TELETEXT PORT (gap 2): the rule under the non-scrolling band is solid
+     * black, as in WinHelp 3.1 (pixel-checked against the VM) */
+    case WM_DRAWITEM:
+        if (wParam == CTL_ID_RULE)
+        {
+            const DRAWITEMSTRUCT *di = (const DRAWITEMSTRUCT *)lParam;
+            FillRect(di->hDC, &di->rcItem, GetStockObject(BLACK_BRUSH));
+            return TRUE;
+        }
+        break;
+
+    /* TELETEXT PORT (phase 2a, gap 3): Alt+letter presses a button-bar
+     * button, as in WinHelp 3.1 (Alt+C Contents, Alt+S Search, Alt+B Back,
+     * Alt+T History, Alt+< Alt+>, and a file's own buttons, e.g. Alt+G
+     * Glossary). The menu bar's mnemonics (F E M H) are tried first and
+     * left to Windows; Wine had no button mnemonics at all. */
+    case WM_SYSCOMMAND:
+        if ((wParam & 0xFFF0) == SC_KEYMENU && lParam > ' ' &&
+            (win = (WINHELP_WINDOW*) GetWindowLongPtrW(hWnd, 0)))
+        {
+            char ch = tt_lower((BYTE)lParam);
+            HMENU menu = GetMenu(hWnd);
+            int i, n = menu ? GetMenuItemCount(menu) : 0;
+            BOOL in_menu = FALSE;
+            for (i = 0; i < n && !in_menu; i++)
+            {
+                char item[64], *amp;
+                if (GetMenuStringA(menu, i, item, sizeof(item), MF_BYPOSITION) &&
+                    (amp = strchr(item, '&')) && amp[1] &&
+                    tt_lower((BYTE)amp[1]) == ch)
+                    in_menu = TRUE;
+            }
+            if (!in_menu)
+            {
+                for (button = win->first_button; button; button = button->next)
+                {
+                    const char *amp = strchr(button->lpszName, '&');
+                    if (amp && amp[1] && tt_lower((BYTE)amp[1]) == ch)
+                    {
+                        if (button->hWnd && IsWindowEnabled(button->hWnd))
+                            PostMessageA(hWnd, WM_COMMAND, button->wParam, 0);
+                        else
+                            MessageBeep(0);
+                        return 0;
+                    }
+                }
+            }
+        }
         break;
 
     case WM_COMMAND:
@@ -1606,6 +2045,40 @@ static LRESULT CALLBACK WINHELP_MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, 
         break;
 
     case WM_NOTIFY:
+        /* TELETEXT PORT (gap 2): the band reports its content height and
+         * forwards mouse messages for its own hotspots. */
+        if (wParam == CTL_ID_NSR)
+        {
+            win = (WINHELP_WINDOW*) GetWindowLongPtrW(hWnd, 0);
+            if (((NMHDR*)lParam)->code == EN_REQUESTRESIZE && win)
+            {
+                const RECT *rq = &((REQRESIZE*)lParam)->rc;
+                int h = rq->bottom - rq->top;
+                if (h != win->tt_nsr_h)
+                {
+                    win->tt_nsr_h = h;
+                    if (win->tt_nsr_on) WINHELP_LayoutMainWindow(win);
+                }
+            }
+            else if (((NMHDR*)lParam)->code == EN_MSGFILTER && win)
+            {
+                const MSGFILTER* msgf = (const MSGFILTER*)lParam;
+                WINE_TRACE("TT NSR msgfilter %x\n", msgf->msg);
+                if (msgf->msg == WM_LBUTTONDOWN)
+                {
+                    BOOL r;
+                    POINT zero = { 0, 0 };
+                    tt_link_ctl = CTL_ID_NSR;
+                    r = WINHELP_HandleTextMouse(win, msgf->msg, msgf->lParam);
+                    tt_link_ctl = CTL_ID_TEXT;
+                    /* the band never scrolls, whatever the click did */
+                    if (WINHELP_IsWindowAlive(win) && GetDlgItem(hWnd, CTL_ID_NSR))
+                        SendMessageW(GetDlgItem(hWnd, CTL_ID_NSR), EM_SETSCROLLPOS, 0, (LPARAM)&zero);
+                    return r;
+                }
+            }
+            break;
+        }
         if (wParam == CTL_ID_TEXT)
         {
             RECT        rc;
@@ -1664,6 +2137,23 @@ static LRESULT CALLBACK WINHELP_MainWndProc(HWND hWnd, UINT msg, WPARAM wParam, 
             case EN_REQUESTRESIZE:
                 rc = ((REQRESIZE*)lParam)->rc;
                 win = (WINHELP_WINDOW*) GetWindowLongPtrW(hWnd, 0);
+                if (tt_is_popup(win))
+                {
+                    /* TELETEXT PORT (gap 5): keep the fitted width; the
+                     * height is the text's plus border and padding, and
+                     * the popup stays on the work area */
+                    RECT wr, wa;
+                    int h = rc.bottom - rc.top + 2 * (TT_POP_BORDER + TT_POP_PADY);
+                    GetWindowRect(win->hMainWnd, &wr);
+                    TT_WorkAreaFromWindow(win->hMainWnd, &wa);
+                    wr.top = tt_popup_click.y + 9;           /* always from the click */
+                    if (wr.top + h > wa.bottom - 2) wr.top = max(wa.top + 2, wa.bottom - 2 - h);
+                    SetWindowPos(win->hMainWnd, HWND_TOP, wr.left, wr.top,
+                                 wr.right - wr.left, h, SWP_NOZORDER);
+                    WINHELP_LayoutMainWindow(win);
+                    TT_PlaceShadow(win);
+                    break;
+                }
                 AdjustWindowRect(&rc, GetWindowLongW(win->hMainWnd, GWL_STYLE),
                                  FALSE);
                 SetWindowPos(win->hMainWnd, HWND_TOP, 0, 0,
@@ -1801,13 +2291,24 @@ static BOOL WINHELP_RegisterWinClasses(void)
     class_button_box               = class_main;
     class_button_box.lpfnWndProc   = WINHELP_ButtonBoxWndProc;
     class_button_box.cbWndExtra    = 0;
-    class_button_box.hbrBackground = (HBRUSH)(COLOR_BTNFACE+1);
+    class_button_box.hbrBackground = GetStockObject(GRAY_BRUSH); /* TELETEXT PORT: 3.1 bar is #808080 */
     class_button_box.lpszClassName = BUTTON_BOX_WIN_CLASS_NAME;
 
     class_history                  = class_main;
     class_history.lpfnWndProc      = WINHELP_HistoryWndProc;
     class_history.lpszClassName    = HISTORY_WIN_CLASS_NAME;
 
+    /* TELETEXT PORT (gap 5): the popup drop shadow */
+    {
+        WNDCLASSEXA cs;
+        memset(&cs, 0, sizeof(cs));
+        cs.cbSize        = sizeof(cs);
+        cs.lpfnWndProc   = TT_ShadowWndProc;
+        cs.hInstance     = Globals.hInstance;
+        cs.hCursor       = LoadCursorW(0, (LPWSTR)IDC_ARROW);
+        cs.lpszClassName = TT_SHADOW_CLASS;
+        RegisterClassExA(&cs);
+    }
     return (RegisterClassExA(&class_main) &&
             RegisterClassExA(&class_button_box) &&
             RegisterClassExA(&class_history));
@@ -1829,6 +2330,17 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE prev, LPSTR cmdline, int show)
 
     Globals.hInstance = hInstance;
     TT_InstallDialogPlacement();   /* TELETEXT PORT: dialogs on the session monitor */
+    /* TELETEXT PORT (phase 2a, gap 4): the Windows 3.1 look from Navigator
+     * (w31.c): its CTL3D-style thread hook restyles buttons, dialogs,
+     * menus and scroll bars at birth; "plain" = Windows 3.1 as WinHelp drew
+     * it (white dialogs, flat fields). TTWINHLP_W11=1 leaves Windows 11's
+     * look, for diagnosis. */
+    if (!getenv("TTWINHLP_W11"))
+    {
+        w31_set_plain(TRUE);
+        w31_init();
+        w31_hook_install();
+    }
     /* TELETEXT PORT: Microsoft's RichEdit inserts RTF pictures as static
      * OLE objects and silently drops them when OLE is not initialised in
      * the process (Wine's RichEdit draws them itself, so Wine never called

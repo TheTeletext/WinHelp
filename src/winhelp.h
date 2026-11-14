@@ -27,8 +27,8 @@
 #define POPUP_YDISTANCE         20
 #define SHADOW_DX               10
 #define SHADOW_DY               10
-#define BUTTON_CX               6
-#define BUTTON_CY               6
+#define BUTTON_CX               9   /* TELETEXT PORT: was 6; WinHelp 3.1 buttons are 60x21 for "Contents" (VM, pixel scan) */
+#define BUTTON_CY               8   /* TELETEXT PORT: was 6 */
 
 #ifndef RC_INVOKED
 
@@ -53,6 +53,11 @@ typedef struct tagHelpButton
     RECT                rect;
 
     struct tagHelpButton*next;
+
+    /* TELETEXT PORT (gap 3): Disable/EnableButton before the button's
+     * window exists (the default buttons are made before the main window)
+     * was lost, so Back started enabled on the first topic. */
+    BOOL                tt_disabled;
 } WINHELP_BUTTON;
 
 typedef struct
@@ -93,6 +98,11 @@ typedef struct tagWinHelp
     unsigned            font_scale; /* 0 = small, 1 = normal, 2 = large */
 
     struct tagWinHelp*  next;
+
+    /* TELETEXT PORT (phase 2a, gap 2): the non-scrolling region band */
+    BOOL                tt_nsr_on;  /* the current topic has one, shown */
+    int                 tt_nsr_h;   /* its content height (EN_REQUESTRESIZE) */
+    HWND                tt_shadow;  /* TELETEXT PORT (gap 5): a popup's drop shadow */
 } WINHELP_WINDOW;
 
 #define DC_NOMSG     0x00000000

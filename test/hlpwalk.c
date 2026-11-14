@@ -51,12 +51,53 @@ static unsigned count_sub(const char *hay, size_t len, const char *needle)
     return n;
 }
 
+/* Phase 2a: the keyword walk also does what the Search dialog does
+ * (ttsearch.c): every topic offset of every keyword through |KWDATA to a
+ * page. HLPWALK_KW=1 prints the keywords that have several topics. */
+struct kwstat { HLPFILE *hf; unsigned n, multi, refs, unres, macro; };
+
 static void kw_cb(void *p, void **next, void *cookie)
 {
     /* keyword B+ tree leaf entry: string, WORD count, DWORD offset */
     char *s = (char *)p;
-    (*(unsigned *)cookie)++;
+    struct kwstat *k = cookie;
+    short count;
+    DWORD kwoff, off;
+    int i;
+    ULONG rel;
+    memcpy(&count, s + strlen(s) + 1, 2);
+    memcpy(&kwoff, s + strlen(s) + 3, 4);
+    k->n++;
+    if (count > 1)
+    {
+        k->multi++;
+        if (getenv("HLPWALK_KW")) fprintf(stderr, "KW %d [%s]\n", count, s);
+    }
+    for (i = 0; i < count; i++)
+    {
+        memcpy(&off, k->hf->kwdata + 9 + kwoff + 4 * i, 4);
+        k->refs++;
+        if (off == 0xFFFFFFFF) { k->macro++; continue; }
+        if (!HLPFILE_PageByOffset(k->hf, off, &rel)) k->unres++;
+        else if (getenv("HLPWALK_KW") && count > 1)
+            fprintf(stderr, "     -> %s\n", HLPFILE_PageByOffset(k->hf, off, &rel)->lpszTitle);
+    }
     *next = s + strlen(s) + 1 + 2 + 4;
+}
+
+static int region_len(HWND re, HLPFILE_PAGE *page, int region)
+{
+    struct RtfData rd;
+    struct sink s;
+    EDITSTREAM es;
+    memset(&rd, 0, sizeof(rd));
+    if (!HLPFILE_BrowsePageRegion(page, &rd, 1, 0, region)) { free(rd.data); return -1; }
+    s.p = rd.data; s.end = rd.ptr;
+    es.dwCookie = (DWORD_PTR)&s; es.dwError = 0; es.pfnCallback = stream_cb;
+    SendMessageA(re, WM_SETTEXT, 0, (LPARAM)"");
+    SendMessageA(re, EM_STREAMIN, SF_RTF, (LPARAM)&es);
+    free(rd.data);
+    return GetWindowTextLengthA(re);
 }
 
 int main(int argc, char **argv)
@@ -65,7 +106,8 @@ int main(int argc, char **argv)
     HLPFILE_PAGE *page;
     HWND re;
     unsigned pages = 0, browse_fail = 0, empty = 0, links = 0, popups = 0, macros = 0,
-             picts = 0, keywords = 0, objects = 0;
+             picts = 0, keywords = 0, objects = 0, nsr = 0, nsr_bad = 0, nsr_links = 0;
+    struct RtfData rd2;
     unsigned long chars = 0, rtf_bytes = 0;
     DWORD t0 = GetTickCount();
 
@@ -80,7 +122,9 @@ int main(int argc, char **argv)
     hf = HLPFILE_ReadHlpFile(argv[1]);
     if (!hf) { printf("WALK %s LOADFAIL\n", argv[1]); return 2; }
 
-    if (hf->kwbtree) HLPFILE_BPTreeEnum(hf->kwbtree, kw_cb, &keywords);
+    struct kwstat ks = { hf, 0, 0, 0, 0, 0 };
+    if (hf->kwbtree) HLPFILE_BPTreeEnum(hf->kwbtree, kw_cb, &ks);
+    keywords = ks.n;
 
     for (page = hf->first_page; page; page = page->next)
     {
@@ -114,13 +158,39 @@ int main(int argc, char **argv)
             }
             if (n <= 0) empty++;
             chars += n > 0 ? n : 0;
+            /* Phase 2a gap 2: a topic with a non-scrolling region is shown
+             * as two streams; their text must add up to the whole topic
+             * (+-1 for RichEdit's final paragraph mark). */
+            if (page->tt_has_nsr)
+            {
+                int a = region_len(re, page, TT_REGION_NSR), b;
+                HLPFILE_LINK *nl;
+                for (nl = page->tt_first_link_nsr; nl; nl = nl->next)
+                {
+                    nsr_links++;
+                    if (getenv("HLPWALK_NSR")) fprintf(stderr, "NSRLINK [%s] cookie=%d\n", page->lpszTitle, nl->cookie);
+                }
+                b = region_len(re, page, TT_REGION_SCROLL);
+                nsr++;
+                /* the region's last paragraph mark ends the NSR stream, so
+                 * it is not counted there: whole = nsr + scroll + 2 (CR LF
+                 * in GetWindowTextLength), or + 0..1 at a stream end */
+                if (a <= 0 || b < 0 || n - (a + b) < 0 || n - (a + b) > 2) nsr_bad++;
+                if (getenv("HLPWALK_NSR"))
+                    fprintf(stderr, "NSR [%s] whole=%d nsr=%d scroll=%d scroll_ref=%08lx ref=%08lx\n",
+                            page->lpszTitle, n, a, b, page->tt_scroll_ref, page->reference);
+                /* restore the whole-topic link list for the counts above */
+                memset(&rd2, 0, sizeof(rd2));
+                if (HLPFILE_BrowsePage(page, &rd2, 1, 0)) free(rd2.data);
+            }
         }
         free(rd.data);
     }
     printf("WALK %s ver=%u topics=%u browse_fail=%u empty=%u jumps=%u popups=%u macrolinks=%u "
-           "picts=%u objects=%u bmps=%u keywords=%u windows=%u chars=%lu rtf=%lu ms=%lu\n",
+           "picts=%u objects=%u bmps=%u keywords=%u kwmulti=%u kwrefs=%u kwunres=%u kwmacro=%u nsr=%u nsr_bad=%u nsrlinks=%u windows=%u chars=%lu rtf=%lu ms=%lu\n",
            argv[1], hf->version, pages, browse_fail, empty, links, popups, macros, picts, objects,
-           hf->numBmps, keywords, hf->numWindows, chars, rtf_bytes,
+           hf->numBmps, keywords, ks.multi, ks.refs, ks.unres, ks.macro, nsr, nsr_bad, nsr_links, hf->numWindows, chars, rtf_bytes,
            (unsigned long)(GetTickCount() - t0));
-    return 0;
+    if (nsr_bad) return 5;      /* the two regions do not add up to the topic */
+    return ks.unres ? 4 : 0;   /* a keyword topic the Search dialog could not open */
 }

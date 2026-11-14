@@ -16,8 +16,8 @@ set CFLAGS=-O2 -g -Wall -fno-strict-aliasing -include ttcompat.h -D_WIN32_WINNT=
 
 gcc %CFLAGS% -mwindows -o build\%TARGET% ^
   src\callback.c src\hlpfile.c src\macro.c build\macro.lex.yy.c src\string.c src\winhelp.c ^
-  compat\debug.c src\ttport.c src\ttsearch.c build\winhlp32.res ^
-  -lcomctl32 -lcomdlg32 -lshell32 -lole32 -luuid -lgdi32 -luser32 || goto fail
+  compat\debug.c src\ttport.c src\ttsearch.c src\ttabout.c src\w31.c build\winhlp32.res ^
+  -lcomctl32 -lcomdlg32 -lshell32 -lole32 -luuid -lgdi32 -luser32 -lmsimg32 || goto fail
 
 rem Test-only headless walker: the SAME parser object flags as the viewer.
 gcc %CFLAGS% -o build\hlpwalk.exe test\hlpwalk.c src\hlpfile.c src\ttport.c compat\debug.c -lole32 -luuid -lshell32 -lgdi32 -luser32 || goto fail

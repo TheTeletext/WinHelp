@@ -80,7 +80,20 @@ typedef struct tagHlpFilePage
     DWORD                       browse_fwd;
 
     struct tagHlpFileFile*      file;
+
+    /* TELETEXT PORT (phase 2a, gap 2): the non-scrolling region (\keepn).
+     * WinHelp 3.1 TOPICHEADER: NonScroll at 0x25, Scroll at 0x29 (TOPICPOS,
+     * -1 = none); Wine read neither. Paragraphs before tt_scroll_ref belong
+     * to the region; its hotspots live in tt_first_link_nsr. */
+    BOOL                        tt_has_nsr;
+    DWORD                       tt_scroll_ref;
+    HLPFILE_LINK*               tt_first_link_nsr;
 } HLPFILE_PAGE;
+
+/* TELETEXT PORT: which paragraphs HLPFILE_BrowsePageRegion emits */
+#define TT_REGION_ALL       0   /* whole topic (Wine's behaviour; popups)  */
+#define TT_REGION_NSR       1   /* only the non-scrolling region           */
+#define TT_REGION_SCROLL    2   /* only the scrolling region               */
 
 typedef struct
 {
@@ -202,6 +215,8 @@ struct RtfData {
 
 BOOL          HLPFILE_BrowsePage(HLPFILE_PAGE*, struct RtfData* rd,
                                  unsigned font_scale, unsigned relative);
+BOOL          HLPFILE_BrowsePageRegion(HLPFILE_PAGE*, struct RtfData* rd,   /* TELETEXT PORT */
+                                       unsigned font_scale, unsigned relative, int region);
 
 #define HLP_DISPLAY30 0x01     /* version 3.0 displayable information */
 #define HLP_TOPICHDR  0x02     /* topic header information */
