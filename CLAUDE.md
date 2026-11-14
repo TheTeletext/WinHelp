@@ -14,6 +14,12 @@ Reports live with the consumer, Navigator, in `..\mgt-unicorn-suite\docs\`.
   frames, 19 px caption with w31 owning the menu bar, pixel-diff residual
   sweep s14); gates gate_search/nsr/bar/chrome/popup/menu + corpus 110/110;
   open items and where phase 2b resumes: s13.
+- [WinHelp Revival phase 2b 2026-11-13](..\mgt-unicorn-suite\docs6-11-13_WinHelp_Revival_Phase2b.md) -
+  source PUBLISHED at github.com/TheTeletext/WinHelp (reproducible build);
+  TELETEXT.HLP (Navigator's help) + TTWINHLP.HLP (our How to Use Help);
+  HC headless on a private desktop (test/hc_headless.ps1); help sources ->
+  tools/hlpsrc.py + build_hlp.ps1; viewer 0.3.0.0 (HELP_PARTIALKEY, caption
+  = TITLE, key closes popup); gate_teletext; open items s8.
 
 ## Rules for this repo
 
@@ -32,7 +38,10 @@ Reports live with the consumer, Navigator, in `..\mgt-unicorn-suite\docs\`.
   are copyrighted third-party files: never commit them.
 - Gates: `test\gate_corpus.ps1` (corpus), `test\gate_roundtrip.ps1` (HC),
   and the real-input viewer gates `gate_search`, `gate_nsr`, `gate_bar`,
-  `gate_chrome`, `gate_popup`, `gate_menu`. Never build while a gate runs: a failed
+  `gate_chrome`, `gate_popup`, `gate_menu`, `gate_teletext`. Never build while a gate runs: a failed
   link deletes the exe.
+- The published repo must hold the source of any TTWINHLP.EXE that ships:
+  push before a release build, tag the commit the MSI's exe is built from.
+- Help Compiler: always `test/hc_headless.ps1` (never a windowed DOSBox).
 - Before driving the viewer with the mouse, release 86Box's mouse grab
   (`vm_mouse.ps1 release`), or the clicks go into the VM.

@@ -175,9 +175,12 @@ def build(srcs, outdir, base):
                 rtf.append("\\pard\\sb80%s\\f0\\fs20 %s\\par" % (sa, inline(s, ctxs, used)))
             elif kind == "li":
                 # the bullet in the Symbol font, as Windows 3.1's own help files have it
-                rtf.append("\\pard\\sb40%s\\li360\\fi-240\\f0\\fs20 {\\f3\\'b7}\\tab %s\\par" % (sa, inline(s, ctxs, used)))
+                # \tx360: an explicit tab stop at the indent. The real WinHelp
+                # tabs to the next default stop (0.5 in), not to the hanging
+                # indent as RichEdit does; with the stop both agree.
+                rtf.append("\\pard\\sb40%s\\li360\\fi-240\\tx360\\f0\\fs20 {\\f3\\'b7}\\tab %s\\par" % (sa, inline(s, ctxs, used)))
             elif kind == "num":
-                rtf.append("\\pard\\sb40%s\\li360\\fi-240\\f0\\fs20 %s\\tab %s\\par" % (sa, b[1], inline(s, ctxs, used)))
+                rtf.append("\\pard\\sb40%s\\li360\\fi-240\\tx360\\f0\\fs20 %s\\tab %s\\par" % (sa, b[1], inline(s, ctxs, used)))
             elif kind == "h":
                 rtf.append("\\pard\\sb160%s\\f0\\fs20 {\\b %s}\\par" % (sa, inline(s, ctxs, used)))
             else:

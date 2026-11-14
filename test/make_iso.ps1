@@ -4,9 +4,11 @@
 param([Parameter(Mandatory=$true)][string]$Iso, [Parameter(Mandatory=$true)][string[]]$Files,
       [string]$Label = "TTHELP")
 $img = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
+$img.ChooseImageDefaultsForMediaType(12)   # IMAPI_MEDIA_TYPE_DISK (CD/DVD-size image)
+# AFTER the media defaults, which would otherwise make it UDF only (MSCDEX
+# reads ISO 9660 only: "Cannot read from drive D" in the guest)
 $img.FileSystemsToCreate = 1          # FsiFileSystemISO9660: 8.3 names, as DOS reads them
 $img.VolumeName = $Label
-$img.ChooseImageDefaultsForMediaType(12)   # IMAPI_MEDIA_TYPE_DISK (CD/DVD-size image)
 foreach ($f in $Files) { $img.Root.AddTree((Resolve-Path $f).Path, $false) }
 $res = $img.CreateResultImage()
 $stream = $res.ImageStream

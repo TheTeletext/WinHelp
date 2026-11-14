@@ -73,7 +73,7 @@ Stop-Ttw $run | Out-Null
 $run = Start-Ttw -Exe "$PSScriptRoot\..\build\TTWINHLP.EXE" -Arguments "-i wais_overview `"$File`"" -Ini $ini -Log "$Out\tele_popup.log"
 if ((Test-TtwOnMonitor2 $run).Count) { $run.Proc.Kill(); "MONITOR FAIL"; exit 2 }
 Set-TtwActive $run.Main | Out-Null
-$text = [TtIn]::GetDlgItem($run.Main, 0x701); $tt = [TtIn]::GetText($text) -replace "`r`n", "`r"; $idx = $tt.IndexOf("a WAIS database")
+$text = [TtIn]::GetDlgItem($run.Main, 0x701); $tt = [TtIn]::GetText($text) -replace "`r`n", "`r"; $idx = $tt.IndexOf("WAIS, the Wide Area") - 2   # the glossary hotspot opening "About WAIS" (+3 below: its 2nd letter)
 $packed = [int64][TtIn]::SendMessage($text, 0x00D6, [IntPtr]($idx + 3), [IntPtr]::Zero)
 $tr = New-Object TtIn+RECT; [TtIn]::GetWindowRect($text, [ref]$tr) | Out-Null
 Invoke-TtwClick ($tr.L + [int]($packed -band 0xFFFF) + 3) ($tr.T + [int](($packed -shr 16) -band 0xFFFF) + 7); Start-Sleep -Milliseconds 900
