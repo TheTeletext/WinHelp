@@ -6,6 +6,13 @@ files. Microsoft removed WinHelp from Windows 10 and 11; this brings it
 back as a standalone program, the way WinHelp always was: applications
 launch it for their Help menu.
 
+[![download](https://img.shields.io/badge/download-TTWINHLP.EXE-blue)](https://github.com/TheTeletext/WinHelp/releases/latest)
+[![release](https://img.shields.io/github/v/release/TheTeletext/WinHelp?label=release&color=blue)](https://github.com/TheTeletext/WinHelp/releases/latest)
+[![licence](https://img.shields.io/badge/licence-LGPL--2.1--or--later-blue)](COPYING.LIB)
+
+Download: [TTWINHLP.EXE](https://github.com/TheTeletext/WinHelp/releases/latest)
+(SHA-256 published beside it in `SHA256SUMS`).
+
 ## Licence
 
 GNU Lesser General Public License, version 2.1 or later (`COPYING.LIB`).
