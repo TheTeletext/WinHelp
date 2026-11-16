@@ -13,6 +13,9 @@ launch it for their Help menu.
 Download: [TTWINHLP.EXE](https://github.com/TheTeletext/WinHelp/releases/latest)
 (SHA-256 published beside it in `SHA256SUMS`).
 
+<p><img src="docs/ttwinhlp.png" width="560" alt="The Teletext WinHelp showing Teletext Navigator Help"></p>
+<p><em>TTWINHLP.EXE on Windows 11, at the Contents of a WinHelp 3.1 file (Teletext Navigator Help, compiled with the Microsoft Help Compiler of the period).</em></p>
+
 ## Licence
 
 GNU Lesser General Public License, version 2.1 or later (`COPYING.LIB`).
